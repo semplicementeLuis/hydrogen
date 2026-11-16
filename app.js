@@ -709,18 +709,18 @@
       return particles[heroIdx];
     }
 
-    const minX = viewW * 0.25;
-    const maxX = viewW * 0.75;
-    const minY = viewH * 0.24;
-    const maxY = viewH * 0.72;
+    // Cerca una particella ben isolata ma vicina al centro dello schermo
+    const { cx, cy } = layoutBounds;
+    const maxCenterR = Math.min(viewW, viewH) * 0.22;
 
     let bestIdx = 0;
-    let bestMinDistSq = -1;
-    const step = Math.max(1, Math.floor(particles.length / 180));
+    let bestScore = -Infinity;
+    const step = Math.max(1, Math.floor(particles.length / 220));
 
     for (let i = 0; i < particles.length; i += step) {
       const p = particles[i];
-      if (p.x < minX || p.x > maxX || p.y < minY || p.y > maxY) continue;
+      const distCenter = Math.hypot(p.x - cx, p.y - cy);
+      if (distCenter > maxCenterR) continue;
 
       let nearestSq = Infinity;
       for (let j = 0; j < particles.length; j += 4) {
@@ -732,8 +732,10 @@
         if (dSq < nearestSq) nearestSq = dSq;
       }
 
-      if (nearestSq > bestMinDistSq) {
-        bestMinDistSq = nearestSq;
+      const isolation = Math.sqrt(nearestSq);
+      const score = isolation - distCenter * 0.55;
+      if (score > bestScore) {
+        bestScore = score;
         bestIdx = i;
       }
     }
@@ -753,14 +755,15 @@
   function initMicroScene() {
     const { cx, cy } = layoutBounds;
     const minDim = Math.min(viewW, viewH);
-    const startR = clamp(minDim * 0.21, 90, 175);
+    const startR = clamp(minDim * 0.22, 95, 180);
 
     micro.time = 0;
     micro.gluons = [];
     micro.gluonTimer = 0;
     micro.opacity = 0;
+    micro.orbitKickApplied = false;
 
-    // 3 Quark con carica di colore QCD (Rosso, Verde, Blu)
+    // 3 Quark separati (Rosso, Verde, Blu) che prima si condensano da energia bianca
     const quarkColors = [2, 3, 4];
     const baseAngles = [-Math.PI / 2, Math.PI / 6 + 0.15, (5 * Math.PI) / 6 - 0.15];
 
@@ -768,17 +771,20 @@
       const a = baseAngles[idx];
       const x = cx + Math.cos(a) * startR;
       const y = cy + Math.sin(a) * startR;
-      // Lento momento angolare orbitale mentre si attraggono verso il centro comune
-      const tangAngle = a + Math.PI / 2;
-      const tangSpeed = 1.65;
 
-      // Sotto-particelle luminose che compongono ogni singolo quark
+      // Sotto-particelle che partono disperse in energia bianca e si condensano formando il quark
       const subDots = Array.from({ length: 24 }, () => {
         const sa = Math.random() * Math.PI * 2;
-        const sr = Math.sqrt(Math.random()) * clamp(minDim * 0.026, 11, 20);
+        const sr = Math.sqrt(Math.random()) * clamp(minDim * 0.025, 11, 19);
+        const ox = Math.cos(sa) * sr;
+        const oy = Math.sin(sa) * sr;
+        const scatterAngle = sa + (Math.random() - 0.5) * 1.1;
+        const scatterMult = 2.8 + Math.random() * 1.8;
         return {
-          ox: Math.cos(sa) * sr,
-          oy: Math.sin(sa) * sr,
+          ox,
+          oy,
+          spawnOx: Math.cos(scatterAngle) * sr * scatterMult,
+          spawnOy: Math.sin(scatterAngle) * sr * scatterMult,
           phase: Math.random() * Math.PI * 2,
           size: 0.7 + Math.random() * 0.75,
         };
@@ -787,8 +793,11 @@
       return {
         x,
         y,
-        vx: Math.cos(tangAngle) * tangSpeed,
-        vy: Math.sin(tangAngle) * tangSpeed,
+        homeX: x,
+        homeY: y,
+        vx: 0,
+        vy: 0,
+        baseAngle: a,
         colorIdx,
         subDots,
       };
@@ -904,7 +913,10 @@
   }
 
   /**
-   * Aggiorna la fisica interna della micro-scena (3 quark, scambio di gluoni, cattura elettrone).
+   * Aggiorna la micro-scena in 3 fasi chiare dopo che la visuale è centrata e pronta:
+   * 1) Formazione dei 3 quark separati da fluttuazioni di energia bianca (0 - 1.5s)
+   * 2) Avvicinamento e scambio di gluoni fino a legarsi nel protone (1.5s - 4.8s)
+   * 3) Cattura del primo elettrone -> primo atomo di Idrogeno (4.8s - 7.8s)
    */
   function updateMicroPhysics(dtMs) {
     const dt = Math.min(dtMs / 16.6667, 2.2);
@@ -913,21 +925,42 @@
     const { cx, cy } = layoutBounds;
     const minDim = Math.min(viewW, viewH);
     const quarks = micro.quarks;
+    const formDuration = prefersReducedMotion ? 900 : 1500;
+
+    // Fase 1: i 3 quark si stanno formando ancora separati nei propri vertici
+    if (micro.time < formDuration) {
+      for (let i = 0; i < 3; i++) {
+        const q = quarks[i];
+        q.x = q.homeX + Math.sin(micro.time * 0.005 + i * 2) * 2.5;
+        q.y = q.homeY + Math.cos(micro.time * 0.0055 + i * 2) * 2.5;
+      }
+      return;
+    }
+
+    // Avvio della fase 2: imprime il momento iniziale ora che la visuale è pronta
+    if (!micro.orbitKickApplied) {
+      micro.orbitKickApplied = true;
+      for (let i = 0; i < 3; i++) {
+        const q = quarks[i];
+        const tangAngle = q.baseAngle + Math.PI / 2;
+        q.vx = Math.cos(tangAngle) * 1.45;
+        q.vy = Math.sin(tangAngle) * 1.45;
+      }
+    }
 
     // 1. Forza forte tra i 3 quark: si avvicinano e si legano in un protone danzante
     const eqDist = clamp(minDim * 0.068, 28, 52);
-    const springStrength = micro.time > 1800 ? 0.015 : 0.0095;
+    const bindElapsed = micro.time - formDuration;
+    const springStrength = bindElapsed > 1600 ? 0.0155 : 0.01;
 
     for (let i = 0; i < 3; i++) {
       const q = quarks[i];
 
-      // Richiamo verso il centro comune
       const dxC = cx - q.x;
       const dyC = cy - q.y;
-      q.vx += dxC * 0.0045 * dt;
-      q.vy += dyC * 0.0045 * dt;
+      q.vx += dxC * 0.0046 * dt;
+      q.vy += dyC * 0.0046 * dt;
 
-      // Interazione a coppie tra quark (attrazione forte + repulsione a cortissimo raggio)
       for (let j = 0; j < 3; j++) {
         if (i === j) continue;
         const other = quarks[j];
@@ -948,9 +981,8 @@
         }
       }
 
-      // Leggero moto orbitale + tremolio quantistico + interazione mouse
-      q.vx += (-dyC * 0.0018 + (Math.random() - 0.5) * 0.45) * dt;
-      q.vy += (dxC * 0.0018 + (Math.random() - 0.5) * 0.45) * dt;
+      q.vx += (-dyC * 0.0018 + (Math.random() - 0.5) * 0.42) * dt;
+      q.vy += (dxC * 0.0018 + (Math.random() - 0.5) * 0.42) * dt;
 
       if (pointer.active && simState === STATE.MICRO_QUARKS) {
         const mdx = q.x - pointer.x;
@@ -958,8 +990,8 @@
         const mDist = Math.hypot(mdx, mdy);
         if (mDist < 130 && mDist > 1) {
           const f = (1 - mDist / 130) * 0.85 * dt;
-          q.vx += (pointer.down ? -mdx : mdx) / mDist * f;
-          q.vy += (pointer.down ? -mdy : mdy) / mDist * f;
+          q.vx += ((pointer.down ? -mdx : mdx) / mDist) * f;
+          q.vy += ((pointer.down ? -mdy : mdy) / mDist) * f;
         }
       }
 
@@ -969,14 +1001,14 @@
       q.y += q.vy * dt;
     }
 
-    // 2. Emissione e volo dei gluoni (particelle di luce scambiate tra i quark)
+    // 2. Emissione e volo dei gluoni tra i quark in avvicinamento
     const avgSep =
       (Math.hypot(quarks[0].x - quarks[1].x, quarks[0].y - quarks[1].y) +
         Math.hypot(quarks[1].x - quarks[2].x, quarks[1].y - quarks[2].y) +
         Math.hypot(quarks[2].x - quarks[0].x, quarks[2].y - quarks[0].y)) /
       3;
 
-    const emitInterval = clamp(avgSep * 0.48, 38, 125);
+    const emitInterval = clamp(avgSep * 0.44, 36, 118);
     micro.gluonTimer += dtMs;
     if (micro.gluonTimer >= emitInterval && micro.gluons.length < 36) {
       micro.gluonTimer = 0;
@@ -986,7 +1018,7 @@
         fromIdx,
         toIdx,
         t: 0,
-        speed: 0.026 + Math.random() * 0.018,
+        speed: 0.028 + Math.random() * 0.018,
         curveOffset: (Math.random() - 0.5) * clamp(avgSep * 0.55, 22, 65),
         colorIdx: Math.random() < 0.45 ? 0 : quarks[fromIdx].colorIdx,
       });
@@ -996,20 +1028,20 @@
       const g = micro.gluons[i];
       g.t += g.speed * dt;
       if (g.t >= 1) {
-        // Piccolo scambio di impulso quando il gluone raggiunge il quark bersaglio
         const qFrom = quarks[g.fromIdx];
         const qTo = quarks[g.toIdx];
         const dx = qFrom.x - qTo.x;
         const dy = qFrom.y - qTo.y;
         const len = Math.hypot(dx, dy) || 1;
-        qTo.vx += (dx / len) * 0.32;
-        qTo.vy += (dy / len) * 0.32;
+        qTo.vx += (dx / len) * 0.34;
+        qTo.vy += (dy / len) * 0.34;
         micro.gluons.splice(i, 1);
       }
     }
 
-    // 3. Cattura del primo elettrone dopo la formazione del protone (~3.5s) -> Primo atomo di Idrogeno!
-    if (micro.time > 3500) {
+    // 3. Cattura del primo elettrone dopo il legame del protone -> primo atomo di Idrogeno
+    const electronTrigger = formDuration + (prefersReducedMotion ? 1600 : 3200);
+    if (micro.time > electronTrigger) {
       const el = micro.electron;
       el.active = true;
       el.radius += (el.targetRadius - el.radius) * 0.032 * dt;
@@ -1074,11 +1106,10 @@
       return;
     }
 
-    // 3. Rallentatore progressivo + riquadro bianco sulla particella isolata
+    // 3. Rallentatore progressivo + centramento del riquadro bianco al centro dello schermo
     if (simState === STATE.SLOW_MO_RETICLE) {
-      const dur = prefersReducedMotion ? 900 : 1550;
+      const dur = prefersReducedMotion ? 900 : 1500;
       const progress = clamp(stateTime / dur, 0, 1);
-      // Tempo rallenta fino a quasi fermarsi (0.04x)
       const timeScale = 1 - easeOutCubic(progress) * 0.96;
 
       for (let i = 0; i < particles.length; i++) {
@@ -1091,45 +1122,42 @@
       }
 
       const hero = particles[heroIdx];
-      camX = cx + (hero.x - cx) * easeInOutQuad(progress);
-      camY = cy + (hero.y - cy) * easeInOutQuad(progress);
-      camZoom = 1 + 0.22 * easeInOutQuad(progress);
+      const centerEase = easeInOutQuad(progress);
+      camX = cx + (hero.x - cx) * centerEase;
+      camY = cy + (hero.y - cy) * centerEase;
+      camZoom = 1 + 0.35 * centerEase;
 
       reticleAlpha = easeOutCubic(clamp(progress * 1.4, 0, 1));
-      reticleSize = 112 - 64 * easeOutCubic(progress);
+      reticleSize = 116 - 68 * easeOutCubic(progress);
 
       if (progress >= 1) {
         simState = STATE.CAMERA_ZOOM_IN;
         stateTime = 0;
-        zoomStartX = camX;
-        zoomStartY = camY;
+        zoomStartX = hero.x;
+        zoomStartY = hero.y;
       }
       return;
     }
 
-    // 4. Zoom della visuale dentro il riquadro bianco e dentro la particella di luce
+    // 4. Zoom della visuale perfettamente centrato dentro il riquadro bianco (i quark restano separati fino a fine zoom)
     if (simState === STATE.CAMERA_ZOOM_IN) {
-      const dur = prefersReducedMotion ? 950 : 1650;
+      const dur = prefersReducedMotion ? 950 : 1600;
       const progress = clamp(stateTime / dur, 0, 1);
       const eased = easeInOutCubic(progress);
 
       const hero = particles[heroIdx];
-      camX = zoomStartX + (hero.x - zoomStartX) * eased;
-      camY = zoomStartY + (hero.y - zoomStartY) * eased;
-      camZoom = 1.22 * Math.pow(18.5, eased); // Zoom fino a ~22.5x
+      camX = hero.x;
+      camY = hero.y;
+      camZoom = 1.35 * Math.pow(16.66, eased); // Zoom fino a ~22.5x esattamente al centro
 
-      // Le particelle circostanti restano quasi sospese nel rallentatore
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
-        p.x += p.vx * dt * 0.04;
-        p.y += p.vy * dt * 0.04;
+        p.x += p.vx * dt * 0.035;
+        p.y += p.vy * dt * 0.035;
       }
 
-      // A metà zoom entriamo nella micro-struttura: iniziano i 3 quark & gluoni
-      micro.opacity = clamp((camZoom - 3.2) / 9.0, 0, 1);
-      if (micro.opacity > 0.05) {
-        updateMicroPhysics(dtMs);
-      }
+      // Rivela i 3 semi separati di energia bianca verso la fine dello zoom senza ancora avvicinarli
+      micro.opacity = clamp((camZoom - 4.0) / 10.0, 0, 1);
 
       if (progress >= 1) {
         simState = STATE.MICRO_QUARKS;
@@ -1139,16 +1167,15 @@
       return;
     }
 
-    // 5. Interno della particella: 3 Quark che si avvicinano + scambio Gluoni -> Protone -> Elettrone
+    // 5. Interno della particella: Formazione quark -> Avvicinamento & Gluoni -> Protone -> Elettrone
     if (simState === STATE.MICRO_QUARKS) {
       micro.opacity = 1;
       updateMicroPhysics(dtMs);
 
-      const microTotalDuration = prefersReducedMotion ? 3600 : 6600;
+      const microTotalDuration = prefersReducedMotion ? 4400 : 7800;
       if (stateTime >= microTotalDuration) {
         simState = STATE.CAMERA_ZOOM_OUT;
         stateTime = 0;
-        // Prepara tutte le particelle macro per la ricomposizione nella scena Idrogeno
         if (!returnToSettledAfterMicro) {
           for (let i = 0; i < particles.length; i++) {
             particles[i].magneticWake = 0;
@@ -1683,35 +1710,54 @@
       );
     }
 
-    // 3. I 3 Quark formati da sfere/sotto-particelle luminose (Rosso, Verde, Blu)
+    // 3. I 3 Quark: prima si condensano da energia bianca, poi brillano nei propri colori (R, G, B)
     const now = performance.now() * 0.004;
+    const formDuration = prefersReducedMotion ? 900 : 1500;
+    const formProgress = clamp(micro.time / formDuration, 0, 1);
+    const condenseEase = easeOutCubic(formProgress);
+    const colorMix = easeInOutQuad(clamp((formProgress - 0.2) / 0.8, 0, 1));
+
     for (let i = 0; i < 3; i++) {
       const q = quarks[i];
       const qx = tx(q.x);
       const qy = ty(q.y);
 
-      // Alone morbido del singolo quark
-      const coreGlow = 26 * scaleFactor;
-      ctx.globalAlpha = opacity * 0.42;
-      ctx.drawImage(
-        glowSprites[q.colorIdx],
-        qx - coreGlow,
-        qy - coreGlow,
-        coreGlow * 2,
-        coreGlow * 2
-      );
+      // Alone morbido del singolo quark (da bianco puro a colore QCD)
+      const coreGlow = (18 + 10 * condenseEase) * scaleFactor;
+      if (colorMix < 0.99) {
+        ctx.globalAlpha = opacity * 0.34 * (1 - colorMix);
+        ctx.drawImage(glowSprites[0], qx - coreGlow, qy - coreGlow, coreGlow * 2, coreGlow * 2);
+      }
+      if (colorMix > 0.01) {
+        ctx.globalAlpha = opacity * 0.44 * colorMix;
+        ctx.drawImage(
+          glowSprites[q.colorIdx],
+          qx - coreGlow,
+          qy - coreGlow,
+          coreGlow * 2,
+          coreGlow * 2
+        );
+      }
 
-      // Sotto-particelle vibranti che formano il quark
+      // Sotto-particelle che si condensano formando ciascun quark
       for (let k = 0; k < q.subDots.length; k++) {
         const sd = q.subDots[k];
+        const curOx = sd.spawnOx + (sd.ox - sd.spawnOx) * condenseEase;
+        const curOy = sd.spawnOy + (sd.oy - sd.spawnOy) * condenseEase;
         const jx = Math.cos(now + sd.phase) * 2.2;
         const jy = Math.sin(now * 1.2 + sd.phase) * 2.2;
-        const sx = tx(q.x + sd.ox + jx);
-        const sy = ty(q.y + sd.oy + jy);
+        const sx = tx(q.x + curOx + jx);
+        const sy = ty(q.y + curOy + jy);
         const sr = 4.6 * sd.size * scaleFactor;
 
-        ctx.globalAlpha = opacity * 0.88;
-        ctx.drawImage(glowSprites[q.colorIdx], sx - sr, sy - sr, sr * 2, sr * 2);
+        if (colorMix < 0.99) {
+          ctx.globalAlpha = opacity * 0.85 * (1 - colorMix);
+          ctx.drawImage(glowSprites[0], sx - sr, sy - sr, sr * 2, sr * 2);
+        }
+        if (colorMix > 0.01) {
+          ctx.globalAlpha = opacity * 0.88 * colorMix;
+          ctx.drawImage(glowSprites[q.colorIdx], sx - sr, sy - sr, sr * 2, sr * 2);
+        }
       }
     }
 
@@ -1825,7 +1871,7 @@
       const hsx = cx + (hero.x - camX) * camZoom;
       const hsy = cy + (hero.y - camY) * camZoom;
       const boxSize =
-        simState === STATE.SLOW_MO_RETICLE ? reticleSize : (48 / 1.22) * camZoom;
+        simState === STATE.SLOW_MO_RETICLE ? reticleSize : (48 / 1.35) * camZoom;
       const boxAlpha =
         simState === STATE.SLOW_MO_RETICLE
           ? reticleAlpha
