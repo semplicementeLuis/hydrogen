@@ -15,7 +15,7 @@
   // Scale di zoom fisse della telecamera continua (tutto nello stesso spazio mondo centrato in 0,0)
   const MICRO_ZOOM = 24.0;
   const COSMIC_ZOOM = 0.50;
-  const STAR_ZOOM = 2.9;
+  const STAR_ZOOM = 2.2;
 
   // Palette luminosa: bianchi Big Bang + colori QCD (R,G,B) + atomi cosmici + strati nucleosintesi stellare
   const PALETTE = [
@@ -163,18 +163,22 @@
 
   const SPRITE_SIZE = 64;
 
-  function makeGlowSprite(r, g, b) {
+  function makeGlowSprite(r, g, b, coreWhiteMix = 0.85) {
     const sc = document.createElement('canvas');
     sc.width = SPRITE_SIZE;
     sc.height = SPRITE_SIZE;
     const sctx = sc.getContext('2d');
     const half = SPRITE_SIZE / 2;
 
+    const cr = Math.round(r + (255 - r) * coreWhiteMix);
+    const cg = Math.round(g + (255 - g) * coreWhiteMix);
+    const cb = Math.round(b + (255 - b) * coreWhiteMix);
+
     const grad = sctx.createRadialGradient(half, half, 0, half, half, half);
-    grad.addColorStop(0.0, 'rgba(255, 255, 255, 0.96)');
-    grad.addColorStop(0.2, `rgba(${r}, ${g}, ${b}, 0.9)`);
-    grad.addColorStop(0.45, `rgba(${r}, ${g}, ${b}, 0.30)`);
-    grad.addColorStop(0.76, `rgba(${r}, ${g}, ${b}, 0.07)`);
+    grad.addColorStop(0.0, `rgba(${cr}, ${cg}, ${cb}, 0.94)`);
+    grad.addColorStop(0.22, `rgba(${r}, ${g}, ${b}, 0.86)`);
+    grad.addColorStop(0.46, `rgba(${r}, ${g}, ${b}, 0.26)`);
+    grad.addColorStop(0.76, `rgba(${r}, ${g}, ${b}, 0.06)`);
     grad.addColorStop(1.0, `rgba(${r}, ${g}, ${b}, 0)`);
 
     sctx.fillStyle = grad;
@@ -182,11 +186,11 @@
     return sc;
   }
 
-  const glowSprites = PALETTE.map(([r, g, b]) => makeGlowSprite(r, g, b));
+  const glowSprites = PALETTE.map(([r, g, b]) => makeGlowSprite(r, g, b, 0.88));
   const STELLAR_GRADIENT_COUNT = 64;
   const stellarSprites = Array.from({ length: STELLAR_GRADIENT_COUNT }, (_, i) => {
     const [r, g, b] = sampleStellarRGB(i / (STELLAR_GRADIENT_COUNT - 1));
-    return makeGlowSprite(r, g, b);
+    return makeGlowSprite(r, g, b, 0.22);
   });
 
   const star = {
@@ -194,7 +198,8 @@
     elapsed: 0,
     blend: 0,
     fusionDepth: 0,
-    worldRadius: 92,
+    worldRadius: 96,
+    coreCount: 0,
     connectedFilaments: [],
   };
 
@@ -240,12 +245,12 @@
    */
   function opticalRadiusScale(zoom) {
     if (zoom <= 0.5) {
-      return Math.max(0.24, 0.38 * (zoom / 0.5));
+      return Math.max(0.24, 0.42 * (zoom / 0.5));
     }
     if (zoom <= 1.0) {
-      return 0.38 + 0.62 * easeInOutQuad((zoom - 0.5) / 0.5);
+      return 0.42 + 0.58 * easeInOutQuad((zoom - 0.5) / 0.5);
     }
-    return 1.0 + 0.72 * Math.log1p(zoom - 1.0);
+    return 1.0 + 0.16 * Math.log1p(zoom - 1.0);
   }
 
   function updateViewportSize() {
@@ -308,11 +313,14 @@
       gatherPull: 0.08,
       cosmicRole: Math.random(),
       filSpread: (Math.random() - 0.5) * 14,
-      starRPref: 20,
+      starRole: 'cosmic',
+      starRPref: 40,
       starPhase: Math.random() * Math.PI * 2,
+      starNoise: (Math.random() - 0.5) * 0.05,
       starHeat: 0,
       heatMix: 0,
-      recruitedForStar: false,
+      canRecruitFeeder: false,
+      feederDelay: 0,
       isFilamentFeeder: false,
       feederFilIdx: 0,
       feederT: 0.8,
@@ -624,17 +632,20 @@
   }
 
   /**
-   * Prepara SOLO i metadati dell'ammasso per il Capitolo 3 senza spostare alcuna particella:
-   * tutto resta esattamente dov'è nella Rete Cosmica.
+   * Classifica le particelle secondo la loro posizione REALE nella Rete Cosmica senza spostarne nemmeno una:
+   * - 'core': già dentro l'ammasso bersaglio (mantiene l'ordine radiale iniziale)
+   * - 'feeder': già lungo uno dei filamenti connessi all'ammasso (scorre dentro la stella)
+   * - 'cosmic': tutto il resto dell'universo (resta intatto nella propria distribuzione cosmica)
    */
   function initStarMetadataOnly() {
     const node = cosmic.nodes[targetClusterNodeIdx];
     const minDim = Math.min(viewW, viewH);
-    star.active = true;
+    star.active = false;
     star.elapsed = 0;
     star.blend = 0;
     star.fusionDepth = 0;
-    star.worldRadius = clamp((minDim * 0.34) / STAR_ZOOM, 64, 114);
+    star.worldRadius = clamp((minDim * 0.30) / STAR_ZOOM, 75, 118);
+    star.coreCount = 0;
 
     const connected = [];
     for (let i = 0; i < cosmic.filaments.length; i++) {
@@ -660,17 +671,62 @@
     }
     star.connectedFilaments = connected;
 
+    const farCutoff = Math.hypot(viewW, viewH) * 0.85;
+    let recruitSlot = 0;
+
     for (let i = 0; i < particles.length; i++) {
       const p = particles[i];
-      p.starRPref = Math.pow(Math.random(), 2.05) * star.worldRadius;
+      const dNode = Math.hypot(p.x - node.x, p.y - node.y);
       p.starPhase = Math.random() * Math.PI * 2;
       p.starHeat = 0;
       p.heatMix = 0;
-      p.recruitedForStar = false;
-      p.isFilamentFeeder = false;
-      p.feederFilIdx = i % connected.length;
-      p.feederT = 0.8;
       p.feederFade = 1;
+      p.isFilamentFeeder = false;
+      p.canRecruitFeeder = false;
+
+      if (dNode < star.worldRadius * 1.45) {
+        p.starRole = 'core';
+        // Mantiene l'ordine radiale iniziale dell'ammasso evitando rimescolamenti caotici
+        p.starRPref = clamp(dNode * 0.72, 3, star.worldRadius * 0.96);
+        star.coreCount++;
+        continue;
+      }
+
+      // Verifica se la particella si trova già su uno dei filamenti connessi a node
+      let bestFilIdx = -1;
+      let bestFilDistSq = 55 * 55;
+      let bestT = 0.5;
+      for (let f = 0; f < connected.length; f++) {
+        const fil = connected[f];
+        const abx = fil.bx - fil.ax;
+        const aby = fil.by - fil.ay;
+        const t = clamp(((p.x - fil.ax) * abx + (p.y - fil.ay) * aby) / fil.lenSq, 0, 1);
+        const curve = Math.sin(t * Math.PI) * fil.bend;
+        const fx = fil.ax + abx * t + fil.nx * curve;
+        const fy = fil.ay + aby * t + fil.ny * curve;
+        const dSq = (p.x - fx) * (p.x - fx) + (p.y - fy) * (p.y - fy);
+        if (dSq < bestFilDistSq) {
+          bestFilDistSq = dSq;
+          bestFilIdx = f;
+          bestT = t;
+        }
+      }
+
+      if ((p.cosmicRole || 0.5) < 0.52 && bestFilIdx !== -1 && bestT > 0.08) {
+        p.starRole = 'feeder';
+        p.isFilamentFeeder = true;
+        p.feederFilIdx = bestFilIdx;
+        p.feederT = bestT;
+        p.starRPref = clamp(star.worldRadius * (0.28 + 0.68 * Math.pow(Math.random(), 0.9)), 12, star.worldRadius * 0.96);
+      } else {
+        p.starRole = 'cosmic';
+        p.starRPref = clamp(star.worldRadius * (0.35 + 0.62 * Math.pow(Math.random(), 0.9)), 14, star.worldRadius * 0.96);
+        // Solo particelle molto lontane e fuori dallo schermo zoomato possono entrare in fila lungo i filamenti
+        if (dNode > farCutoff && i % 6 === 0) {
+          p.canRecruitFeeder = true;
+          p.feederDelay = (recruitSlot++ % 180) * 55;
+        }
+      }
     }
   }
 
@@ -749,8 +805,9 @@
       p.coreOx = Math.cos(angle) * r;
       p.coreOy = Math.sin(angle) * r;
       p.gatherPull = 0.068 + Math.random() * 0.032;
+      p.starRole = 'cosmic';
+      p.canRecruitFeeder = false;
       p.isFilamentFeeder = false;
-      p.recruitedForStar = false;
       p.feederFade = 1;
     }
 
@@ -957,6 +1014,7 @@
 
     for (let i = 0; i < total; i++) {
       const p = particles[i];
+      if (star.active && p.starRole !== 'cosmic') continue;
       const mass = p.mass;
       const role = p.cosmicRole || 0.5;
 
@@ -1092,10 +1150,10 @@
   }
 
   /**
-   * Fisica continua del Capitolo 3 sulla STESSA scena senza spostare nulla dentro il campo visivo:
-   * - Solo particelle già fuori schermo vengono progressivamente convogliate dai filamenti in ingresso
-   * - Nessun effetto del mouse sulle particelle
-   * - Gradiente continuo (H -> He -> C -> O -> Si -> Fe) e nucleo più denso e fermo al centro
+   * Fisica continua del Capitolo 3 sulla STESSA scena senza distruggere la distribuzione cosmica:
+   * - Solo 'core' (ammasso locale) e 'feeder' (flussi lungo i filamenti connessi) partecipano alla stella
+   * - Tutto il resto dell'universo ('cosmic') continua indisturbato la propria fisica della rete cosmica
+   * - Densità crescente ma senza bruciare al bianco, centro più fermo, gradiente continuo H -> Fe
    */
   function updateStellarClusterPhysics(dtMs) {
     const dt = Math.min(dtMs / 16.6667, 2.2);
@@ -1113,59 +1171,60 @@
     const node = cosmic.nodes[targetClusterNodeIdx];
     const filList = star.connectedFilaments;
     const starR = star.worldRadius;
-    const coreContraction = 1 - 0.24 * depth;
+    const coreContraction = 1 - 0.16 * depth;
+    const maxStarCoreParticles = 580;
 
     const halfViewWorldW = (viewW * 0.5) / camZoom;
     const halfViewWorldH = (viewH * 0.5) / camZoom;
-    const screenDiagWorld = Math.hypot(halfViewWorldW, halfViewWorldH);
 
     const total = particles.length;
     for (let i = 0; i < total; i++) {
       const p = particles[i];
 
-      // Reclutamento silenzioso SOLO quando lo zoom ha superato 1.8x e SOLO per particelle già fuori schermo
-      if (!p.recruitedForStar && camZoom >= STAR_ZOOM * 0.62 && sBlend > 0.25) {
+      // Reclutamento graduale e scaglionato SOLO dai lontani serbatoi fuori schermo verso i filamenti connessi
+      if (
+        p.starRole === 'cosmic' &&
+        p.canRecruitFeeder &&
+        camZoom >= STAR_ZOOM * 0.65 &&
+        star.elapsed > 700 + p.feederDelay &&
+        filList.length > 0
+      ) {
         const offScreen =
           Math.abs(p.x - camX) > halfViewWorldW * 1.15 ||
           Math.abs(p.y - camY) > halfViewWorldH * 1.15;
         if (offScreen) {
-          p.recruitedForStar = true;
-          if (i % 4 === 0 && filList.length > 0) {
-            const filIdx = i % filList.length;
-            const fil = filList[filIdx];
-            const entryT = getFilamentOffscreenT(fil);
-            const t = entryT + Math.random() * (0.98 - entryT);
-            const curve = Math.sin(t * Math.PI) * fil.bend;
-            const candX = fil.ax + (fil.bx - fil.ax) * t + fil.nx * (curve + (p.filSpread || 0) * 0.75);
-            const candY = fil.ay + (fil.by - fil.ay) * t + fil.ny * (curve + (p.filSpread || 0) * 0.75);
-            const candOff =
-              Math.abs(candX - camX) > halfViewWorldW * 1.06 ||
-              Math.abs(candY - camY) > halfViewWorldH * 1.06;
-            if (candOff) {
-              p.isFilamentFeeder = true;
-              p.feederFilIdx = filIdx;
-              p.feederT = t;
-              p.feederFade = 0;
-              p.x = candX;
-              p.y = candY;
-              p.vx = 0;
-              p.vy = 0;
-            }
-          } else {
-            // Gas periferico fuori schermo scaglionato in profondità perché affluisca gradualmente (nessuna onda ad anello)
-            const a = Math.random() * Math.PI * 2;
-            const spawnR = Math.max(starR * 1.35, screenDiagWorld * (1.08 + Math.random() * 1.1));
-            p.x = node.x + Math.cos(a) * spawnR;
-            p.y = node.y + Math.sin(a) * spawnR;
-            p.vx = -Math.sin(a) * 0.22;
-            p.vy = Math.cos(a) * 0.22;
+          const filIdx = i % filList.length;
+          const fil = filList[filIdx];
+          const entryT = getFilamentOffscreenT(fil);
+          const t = Math.min(0.98, entryT + 0.04 + Math.random() * 0.18);
+          const curve = Math.sin(t * Math.PI) * fil.bend;
+          const candX = fil.ax + (fil.bx - fil.ax) * t + fil.nx * (curve + (p.filSpread || 0) * 0.7);
+          const candY = fil.ay + (fil.by - fil.ay) * t + fil.ny * (curve + (p.filSpread || 0) * 0.7);
+          const candOff =
+            Math.abs(candX - camX) > halfViewWorldW * 1.06 ||
+            Math.abs(candY - camY) > halfViewWorldH * 1.06;
+          if (candOff) {
+            p.starRole = 'feeder';
+            p.isFilamentFeeder = true;
+            p.canRecruitFeeder = false;
+            p.feederFilIdx = filIdx;
+            p.feederT = t;
+            p.feederFade = 0;
+            p.x = candX;
+            p.y = candY;
+            p.vx = 0;
+            p.vy = 0;
           }
         }
       }
 
-      if (p.isFilamentFeeder && filList.length > 0) {
+      if (p.starRole === 'cosmic') {
+        continue;
+      }
+
+      if (p.starRole === 'feeder' && filList.length > 0) {
         const fil = filList[p.feederFilIdx % filList.length];
-        const speed = (0.00055 + 0.00045 * (p.mass - 0.9)) * (prefersReducedMotion ? 0.35 : 1);
+        const speed = (0.00052 + 0.00042 * (p.mass - 0.9)) * (prefersReducedMotion ? 0.35 : 1);
         p.feederT -= speed * dt;
 
         const t = Math.max(0.01, p.feederT);
@@ -1181,20 +1240,31 @@
         p.y += p.vy * dt;
 
         const distNode = Math.hypot(p.x - node.x, p.y - node.y);
-        if (distNode < starR * 0.28) {
-          p.feederFade = clamp((distNode - starR * 0.12) / (starR * 0.16), 0, 1);
+
+        // Il flusso lungo il filamento accresce gradualmente la stella finché non è matura
+        if (distNode < starR * 0.95 && star.coreCount < maxStarCoreParticles && p.feederFade > 0.5) {
+          p.starRole = 'core';
+          p.isFilamentFeeder = false;
+          p.feederFade = 1;
+          p.starRPref = clamp(distNode * (0.45 + 0.45 * Math.random()), 10, starR * 0.95);
+          star.coreCount++;
+          continue;
+        }
+
+        if (distNode < starR * 0.32) {
+          p.feederFade = clamp((distNode - starR * 0.14) / (starR * 0.18), 0, 1);
         } else {
           p.feederFade = Math.min(1, p.feederFade + 0.04 * dt);
         }
 
         if (p.feederT <= 0.03 || p.feederFade <= 0.01) {
           const entryT = getFilamentOffscreenT(fil);
-          const resetT = Math.min(0.98, entryT + 0.04 + Math.random() * 0.14);
+          const resetT = Math.min(0.98, entryT + 0.04 + Math.random() * 0.16);
           const resetCurve = Math.sin(resetT * Math.PI) * fil.bend;
           p.feederT = resetT;
           p.feederFade = 0;
-          p.x = fil.ax + (fil.bx - fil.ax) * resetT + fil.nx * (resetCurve + (p.filSpread || 0) * 0.75);
-          p.y = fil.ay + (fil.by - fil.ay) * resetT + fil.ny * (resetCurve + (p.filSpread || 0) * 0.75);
+          p.x = fil.ax + (fil.bx - fil.ax) * resetT + fil.nx * (resetCurve + (p.filSpread || 0) * 0.7);
+          p.y = fil.ay + (fil.by - fil.ay) * resetT + fil.ny * (resetCurve + (p.filSpread || 0) * 0.7);
           p.vx = 0;
           p.vy = 0;
           p.starHeat = 0;
@@ -1203,7 +1273,7 @@
         }
 
         if (distNode < starR * 1.15) {
-          const edgeHeat = clamp((1 - distNode / (starR * 1.15)) * 0.28, 0, 0.28);
+          const edgeHeat = clamp((1 - distNode / (starR * 1.15)) * 0.24, 0, 0.24);
           p.starHeat += (edgeHeat - p.starHeat) * 0.08 * dt;
           p.heatMix = Math.min(1, p.heatMix + 0.04 * dt);
         } else {
@@ -1212,7 +1282,7 @@
         continue;
       }
 
-      // Corpo stellare continuo attorno a node.x, node.y
+      // Corpo stellare ('core') attorno a node.x, node.y
       const dx = p.x - node.x;
       const dy = p.y - node.y;
       const dist = Math.hypot(dx, dy) || 0.001;
@@ -1220,18 +1290,19 @@
       const ny = dy / dist;
 
       const rRatio = clamp(dist / starR, 0, 1);
-      const mobility = 0.05 + 0.95 * Math.pow(rRatio, 1.55);
+      // Centro più fermo e compatto; strati esterni più mobili
+      const mobility = 0.04 + 0.96 * Math.pow(rRatio, 1.55);
 
-      const convWave = Math.sin(star.elapsed * 0.0016 + p.starPhase) * (starR * 0.045 * mobility);
-      const targetR = Math.max(0.6, p.starRPref * coreContraction + convWave);
+      const convWave = Math.sin(star.elapsed * 0.0014 + p.starPhase) * (starR * 0.035 * mobility);
+      const targetR = Math.max(1.5, p.starRPref * coreContraction + convWave);
       const radialErr = targetR - dist;
 
-      const radialSpring = (0.015 + 0.018 * (1 - rRatio * 0.5)) * (0.22 + 0.78 * sBlend);
+      const radialSpring = (0.014 + 0.016 * (1 - rRatio * 0.5)) * (0.18 + 0.82 * sBlend);
       p.vx += nx * radialErr * radialSpring * dt;
       p.vy += ny * radialErr * radialSpring * dt;
 
-      const swirl = 0.068 * mobility * (0.3 + 0.7 * sBlend) * (prefersReducedMotion ? 0.25 : 1) * node.spin;
-      const jitter = 0.024 * mobility * (prefersReducedMotion ? 0.2 : 1);
+      const swirl = 0.058 * mobility * (0.25 + 0.75 * sBlend) * (prefersReducedMotion ? 0.25 : 1) * node.spin;
+      const jitter = 0.016 * mobility * (prefersReducedMotion ? 0.2 : 1);
       p.vx += (-ny * swirl + (Math.random() - 0.5) * jitter) * dt;
       p.vy += (nx * swirl + (Math.random() - 0.5) * jitter) * dt;
 
@@ -1241,14 +1312,11 @@
       p.x += p.vx * dt;
       p.y += p.vy * dt;
 
-      const radialDepth = clamp(1 - dist / starR, 0, 1);
-      const targetHeat = clamp(
-        Math.pow(radialDepth, 1.15) * depth + (p.species === 'He' ? 0.14 * (1 - depth * 0.6) : 0),
-        0,
-        1
-      );
-      p.starHeat += (targetHeat - p.starHeat) * 0.045 * dt;
-      const targetHeatMix = clamp(sBlend * (dist < starR * 1.45 ? 1 : 0.25), 0, 1);
+      // Gradiente cromatico radiale puro e morbido (zero macchie coriandolo)
+      const radialDepth = clamp(1 - dist / (starR * 1.04), 0, 1);
+      const targetHeat = clamp(Math.pow(radialDepth, 1.15) * depth + p.starNoise, 0, 1);
+      p.starHeat += (targetHeat - p.starHeat) * 0.04 * dt;
+      const targetHeatMix = clamp(sBlend * (dist < starR * 1.35 ? 1 : 0.2), 0, 1);
       p.heatMix += (targetHeatMix - p.heatMix) * 0.04 * dt;
     }
   }
@@ -1419,6 +1487,8 @@
         camStartX = camX;
         camStartY = camY;
         camStartZoom = camZoom;
+        star.active = true;
+        star.elapsed = 0;
       }
       return;
     }
@@ -1433,6 +1503,7 @@
       camY = node.y;
       camZoom = camStartZoom * Math.pow(STAR_ZOOM / camStartZoom, eased);
 
+      updateCosmicWebPhysics(dtMs, 1);
       updateStellarClusterPhysics(dtMs);
 
       if (progress >= 1) {
@@ -1445,6 +1516,7 @@
     }
 
     if (simState === STATE.STELLAR_FUSION) {
+      updateCosmicWebPhysics(dtMs, 1);
       updateStellarClusterPhysics(dtMs);
       return;
     }
@@ -1765,9 +1837,9 @@
       const depth = star.fusionDepth;
       const [cr, cg, cb] = sampleStellarRGB(depth);
       const bgGrad = ctx.createRadialGradient(nsx, nsy, 0, nsx, nsy, glowR);
-      bgGrad.addColorStop(0.0, `rgba(${cr}, ${cg}, ${cb}, ${(sBlend * (0.12 + 0.14 * depth)).toFixed(3)})`);
-      bgGrad.addColorStop(0.42, `rgba(255, 165, 92, ${(sBlend * (0.06 + 0.06 * depth)).toFixed(3)})`);
-      bgGrad.addColorStop(0.8, `rgba(76, 166, 255, ${(sBlend * 0.04).toFixed(3)})`);
+      bgGrad.addColorStop(0.0, `rgba(${cr}, ${cg}, ${cb}, ${(sBlend * (0.09 + 0.10 * depth)).toFixed(3)})`);
+      bgGrad.addColorStop(0.45, `rgba(255, 165, 92, ${(sBlend * (0.04 + 0.04 * depth)).toFixed(3)})`);
+      bgGrad.addColorStop(0.82, `rgba(76, 166, 255, ${(sBlend * 0.03).toFixed(3)})`);
       bgGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
@@ -1780,7 +1852,7 @@
 
     const optScale = opticalRadiusScale(camZoom);
     const cosmicVoidFactor = cosmic.active
-      ? easeInOutQuad(clamp(cosmic.elapsed / 2500, 0, 1)) * (1 - sBlend)
+      ? easeInOutQuad(clamp(cosmic.elapsed / 2500, 0, 1)) * (1 - sBlend * 0.35)
       : 0;
     const cullPad = dotBase * optScale * 6;
 
@@ -1802,22 +1874,21 @@
       if (p.isFilamentFeeder) {
         alpha *= p.feederFade;
       }
-      if (cosmicVoidFactor > 0.01 && (p.cosmicRole || 0) >= 0.88) {
+      if (cosmicVoidFactor > 0.01 && (p.cosmicRole || 0) >= 0.88 && p.starRole === 'cosmic') {
         alpha *= 1 - 0.52 * cosmicVoidFactor;
       }
-      if (sBlend > 0.01 && targetNode) {
+      if (sBlend > 0.01 && targetNode && p.starRole === 'core') {
         const distWorld = Math.hypot(p.x - targetNode.x, p.y - targetNode.y);
-        if (distWorld < star.worldRadius * 0.36) {
-          const coreAtten = 0.56 + 0.44 * (distWorld / (star.worldRadius * 0.36));
+        if (distWorld < star.worldRadius * 0.38) {
+          const coreAtten = 0.44 + 0.56 * (distWorld / (star.worldRadius * 0.38));
           alpha *= 1 - sBlend * (1 - coreAtten);
         }
-        // Leggera attenuazione omogenea verso lo stile denso stellare man mano che star.blend cresce
-        alpha *= 1 - 0.24 * sBlend;
+        alpha *= 1 - 0.22 * sBlend;
       }
 
       if (alpha <= 0.01) continue;
 
-      const spriteRadius = dotBase * p.sizeFactor * optScale * 2.85;
+      const spriteRadius = dotBase * p.sizeFactor * optScale * 2.25;
       const heatMix = star.active ? p.heatMix : 0;
 
       if (heatMix > 0.01) {
