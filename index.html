@@ -3,43 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HYDROGEN — Origin of Matter</title>
+  <title>Universe — Origins</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <main class="stage-wrap" id="stage-wrap">
-    <canvas id="stage" aria-label="Storia dell'universo: Big Bang e atomo di Idrogeno formati da particelle">
-      <h1>HYDROGEN</h1>
-      <p>Simulazione interattiva del Big Bang, dell'atomo di idrogeno e dell'asse del tempo cosmico.</p>
+    <canvas id="stage" aria-label="Simulazione cronologica della nascita dell'universo: Big Bang, quark, gluoni e primi atomi">
+      <p>Simulazione interattiva della formazione dei primi atomi dopo il Big Bang.</p>
     </canvas>
 
-    <!-- Semantica accessibile e hit-area trasparenti sincronizzate con i nodi di particelle -->
-    <h1 class="sr-only">HYDROGEN</h1>
     <button
       type="button"
       id="btn-seed"
       class="particle-hitbox particle-hitbox--circle"
-      aria-label="Innesca il Big Bang dalla singolarità primordiale"
+      aria-label="Innesca il Big Bang dalla singolarità bianca"
     ></button>
     <button
       type="button"
-      id="btn-node-singularity"
-      class="particle-hitbox particle-hitbox--circle"
-      aria-label="Epoca 0: Singolarità — Riavvolgi le particelle al centro per ripetere il Big Bang"
-      hidden
-    ></button>
-    <button
-      type="button"
-      id="btn-node-quarks"
-      class="particle-hitbox particle-hitbox--circle"
-      aria-label="Epoca 1: Quark e Gluoni — Entra nella particella per osservare la formazione del protone"
-      hidden
-    ></button>
-    <button
-      type="button"
-      id="btn-node-hydrogen"
-      class="particle-hitbox particle-hitbox--circle"
-      aria-label="Epoca 2: Primi Atomi (Idrogeno) — Emetti un impulso energetico dall'atomo"
+      id="btn-micro-continue"
+      class="particle-hitbox"
+      aria-label="Premi per continuare dalla visuale interna di quark e gluoni"
       hidden
     ></button>
   </main>
@@ -59,33 +42,17 @@
     <div class="tuning-field">
       <div class="tuning-field__row">
         <label for="ctrl-count">Pallini</label>
-        <output id="out-count" for="ctrl-count">4000</output>
+        <output id="out-count" for="ctrl-count">3600</output>
       </div>
-      <input type="range" id="ctrl-count" min="800" max="8000" step="100" value="4000">
+      <input type="range" id="ctrl-count" min="800" max="8000" step="100" value="3600">
     </div>
 
     <div class="tuning-field">
       <div class="tuning-field__row">
         <label for="ctrl-size">Dimensione</label>
-        <output id="out-size" for="ctrl-size">1.9 px</output>
+        <output id="out-size" for="ctrl-size">1.8 px</output>
       </div>
-      <input type="range" id="ctrl-size" min="0.8" max="4.5" step="0.1" value="1.9">
-    </div>
-
-    <div class="tuning-field">
-      <div class="tuning-field__row">
-        <label for="ctrl-brownian">Moto Browniano</label>
-        <output id="out-brownian" for="ctrl-brownian">0.42</output>
-      </div>
-      <input type="range" id="ctrl-brownian" min="0" max="1.4" step="0.02" value="0.42">
-    </div>
-
-    <div class="tuning-field">
-      <div class="tuning-field__row">
-        <label for="ctrl-softness">Confini morbidi</label>
-        <output id="out-softness" for="ctrl-softness">7 px</output>
-      </div>
-      <input type="range" id="ctrl-softness" min="0" max="24" step="1" value="7">
+      <input type="range" id="ctrl-size" min="0.8" max="4.5" step="0.1" value="1.8">
     </div>
 
     <div class="tuning-field">
