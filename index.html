@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HYDROGEN</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="stage-wrap" id="stage-wrap">
+    <canvas id="stage" aria-label="Esperienza interattiva HYDROGEN: simulazione di particelle su sfondo bianco">
+      <h1>HYDROGEN</h1>
+      <p>Scena interattiva di particelle magnetiche con moto browniano.</p>
+    </canvas>
+
+    <!-- Semantica accessibile e hit-area trasparenti sincronizzate con i componenti di particelle -->
+    <h1 class="sr-only">HYDROGEN</h1>
+    <button
+      type="button"
+      id="btn-seed"
+      class="particle-hitbox particle-hitbox--seed"
+      aria-label="Avvia espansione ed esplosione Big Bang"
+    ></button>
+    <button
+      type="button"
+      id="btn-implode"
+      class="particle-hitbox particle-hitbox--circle"
+      aria-label="Riavvolgi particelle nel punto centrale"
+      hidden
+    ></button>
+    <button
+      type="button"
+      id="btn-pulse"
+      class="particle-hitbox particle-hitbox--pill"
+      aria-label="Genera onda di dispersione magnetica"
+      hidden
+    ></button>
+  </main>
+
+  <!-- Pannello segreto per la taratura in tempo reale (premi D per aprire/chiudere) -->
+  <aside
+    id="tuning-panel"
+    class="tuning-panel"
+    aria-label="Controlli parametri particelle"
+    hidden
+  >
+    <div class="tuning-panel__header">
+      <span class="tuning-panel__title">PARAMETRI</span>
+      <button type="button" id="tuning-close" class="tuning-panel__close" aria-label="Chiudi pannello">D</button>
+    </div>
+
+    <div class="tuning-field">
+      <div class="tuning-field__row">
+        <label for="ctrl-count">Pallini</label>
+        <output id="out-count" for="ctrl-count">3800</output>
+      </div>
+      <input type="range" id="ctrl-count" min="800" max="8000" step="100" value="3800">
+    </div>
+
+    <div class="tuning-field">
+      <div class="tuning-field__row">
+        <label for="ctrl-size">Dimensione</label>
+        <output id="out-size" for="ctrl-size">1.8 px</output>
+      </div>
+      <input type="range" id="ctrl-size" min="0.8" max="4.5" step="0.1" value="1.8">
+    </div>
+
+    <div class="tuning-field">
+      <div class="tuning-field__row">
+        <label for="ctrl-brownian">Moto Browniano</label>
+        <output id="out-brownian" for="ctrl-brownian">0.42</output>
+      </div>
+      <input type="range" id="ctrl-brownian" min="0" max="1.4" step="0.02" value="0.42">
+    </div>
+
+    <div class="tuning-field">
+      <div class="tuning-field__row">
+        <label for="ctrl-softness">Confini morbidi</label>
+        <output id="out-softness" for="ctrl-softness">7 px</output>
+      </div>
+      <input type="range" id="ctrl-softness" min="0" max="24" step="1" value="7">
+    </div>
+
+    <div class="tuning-field">
+      <div class="tuning-field__row">
+        <label for="ctrl-magnet-radius">Raggio calamita</label>
+        <output id="out-magnet-radius" for="ctrl-magnet-radius">145 px</output>
+      </div>
+      <input type="range" id="ctrl-magnet-radius" min="50" max="260" step="5" value="145">
+    </div>
+
+    <div class="tuning-field">
+      <div class="tuning-field__row">
+        <label for="ctrl-magnet-force">Forza calamita</label>
+        <output id="out-magnet-force" for="ctrl-magnet-force">1.30</output>
+      </div>
+      <input type="range" id="ctrl-magnet-force" min="0.2" max="3.0" step="0.05" value="1.3">
+    </div>
+
+    <div class="tuning-panel__actions">
+      <button type="button" id="ctrl-replay" class="tuning-btn">Riavvia Big Bang</button>
+      <button type="button" id="ctrl-reset" class="tuning-btn tuning-btn--ghost">Default</button>
+    </div>
+  </aside>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
