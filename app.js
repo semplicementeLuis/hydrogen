@@ -110,8 +110,8 @@
     opacity: 0,
   };
 
-  // Capitolo 2: Rete Cosmica (filamenti curvi, nebulose rotanti e pressione gassosa isotropa)
-  const SH_CELL = 14;
+  // Capitolo 2: Rete Cosmica distante (14 nodi, filamenti sottili e pressione corta per nuclei pieni)
+  const SH_CELL = 6;
   let shCols = 0;
   let shRows = 0;
   let shHead = new Int32Array(0);
@@ -450,13 +450,22 @@
   function initCosmicWebScene() {
     cosmic.elapsed = 0;
 
-    // 5 grandi regioni nebulari / ammassi principali ben distanziati sullo schermo
+    // 14 ammassi distanziati su tutto il campo visivo (inclusi i bordi) per dare scala cosmica profonda
     const anchors = [
-      { rx: 0.22, ry: 0.30, mass: 1.05 },
-      { rx: 0.76, ry: 0.28, mass: 1.15 },
-      { rx: 0.48, ry: 0.48, mass: 1.35 }, // grande nebulosa centrale
-      { rx: 0.25, ry: 0.74, mass: 0.95 },
-      { rx: 0.77, ry: 0.73, mass: 1.05 },
+      { rx: 0.08, ry: 0.16, mass: 0.85 },
+      { rx: 0.31, ry: 0.14, mass: 1.05 },
+      { rx: 0.56, ry: 0.18, mass: 0.95 },
+      { rx: 0.84, ry: 0.15, mass: 1.0 },
+      { rx: 0.16, ry: 0.44, mass: 1.1 },
+      { rx: 0.41, ry: 0.41, mass: 1.35 },
+      { rx: 0.67, ry: 0.45, mass: 1.2 },
+      { rx: 0.91, ry: 0.46, mass: 0.9 },
+      { rx: 0.11, ry: 0.75, mass: 0.95 },
+      { rx: 0.34, ry: 0.71, mass: 1.15 },
+      { rx: 0.57, ry: 0.68, mass: 1.05 },
+      { rx: 0.82, ry: 0.74, mass: 1.15 },
+      { rx: 0.23, ry: 0.92, mass: 0.8 },
+      { rx: 0.69, ry: 0.91, mass: 0.85 },
     ];
 
     cosmic.nodes = anchors.map((a, idx) => ({
@@ -467,9 +476,14 @@
       spin: idx % 2 === 0 ? 1 : -1,
     }));
 
-    // Filamenti curvi che collegano gli ammassi formando la rete cosmica
+    // Rete fitta di filamenti sottili e curvi tra ammassi adiacenti (come una ragnatela cosmica)
     const pairs = [
-      [0, 1], [0, 2], [1, 2], [0, 3], [2, 3], [2, 4], [1, 4], [3, 4],
+      [0, 1], [1, 2], [2, 3],
+      [0, 4], [1, 4], [1, 5], [2, 5], [2, 6], [3, 6], [3, 7],
+      [4, 5], [5, 6], [6, 7],
+      [4, 8], [4, 9], [5, 9], [5, 10], [6, 10], [6, 11], [7, 11],
+      [8, 9], [9, 10], [10, 11],
+      [8, 12], [9, 12], [10, 13], [11, 13],
     ];
     cosmic.filaments = pairs.map(([aIdx, bIdx], idx) => {
       const a = cosmic.nodes[aIdx];
@@ -484,12 +498,11 @@
         by: b.y,
         nx: -dy / len,
         ny: dx / len,
-        bend: (idx % 2 === 0 ? 1 : -1) * clamp(len * 0.14, 28, 65),
+        bend: (idx % 2 === 0 ? 1 : -1) * clamp(len * 0.09, 10, 28),
         lenSq: Math.max(1, dx * dx + dy * dy),
       };
     });
 
-    // Distribuisce gli atomi su tutta la distesa cosmica (~75% Idrogeno, ~25% Elio)
     const padX = viewW * 0.05;
     const padY = viewH * 0.05;
     const hero = particles[heroIdx];
@@ -507,15 +520,14 @@
       }
 
       const angle = Math.random() * Math.PI * 2;
-      const v = 0.06 + Math.random() * 0.22;
+      const v = 0.04 + Math.random() * 0.16;
       p.vx = Math.cos(angle) * v;
       p.vy = Math.sin(angle) * v;
       p.colorIdx = p.baseColorIdx;
-      p.alphaBase = 0.42 + Math.random() * 0.48;
-
-      // Ruolo naturale nella rete cosmica:
-      // 0..0.44 -> flusso nei filamenti, 0.44..0.86 -> aloni/nebulose, 0.86..1 -> gas diffuso nei vuoti
+      p.alphaBase = 0.4 + Math.random() * 0.5;
+      // 0..0.48 -> filamenti sottili, 0.48..0.88 -> ammassi/nodi, 0.88..1 -> vuoti cosmici
       p.cosmicRole = Math.random();
+      p.filSpread = (Math.random() - 0.5) * 9; // larghezza fine del filamento (~9px)
     }
   }
 
@@ -715,20 +727,14 @@
     }
   }
 
-  /**
-   * Fisica scientifica del Capitolo 2 (Instabilità di Jeans, Rete Cosmica & Nebulose):
-   * - Pressione gassosa isotropa (Spatial Hash) per impedire il collasso puntiforme e mantenere ampie nebulose
-   * - Flusso lungo filamenti curvi della rete cosmica tra i grandi ammassi
-   * - Ampio momento angolare orbitale + riscaldamento cromatico nei nuclei più densi
-   */
   function updateCosmicWebPhysics(dtMs) {
     const dt = Math.min(dtMs / 16.6667, 2.2);
     cosmic.elapsed += dtMs;
 
-    const gravityRamp = easeInOutQuad(clamp((cosmic.elapsed - 500) / 5200, 0, 1));
+    const gravityRamp = easeInOutQuad(clamp((cosmic.elapsed - 400) / 4800, 0, 1));
     const total = particles.length;
 
-    // 1. Popola Spatial Hash per pressione gassosa isotropa
+    // 1. Spatial Hash a passo corto (6px) per nuclei pieni e compatti senza buchi né reticoli rigidi
     if (shNext.length !== total) {
       shNext = new Int32Array(total);
     }
@@ -755,21 +761,21 @@
     const isAttracting = pointer.down;
     const magnetForce = CONFIG.magnetForce;
 
-    const repelDist = 11.5;
+    const repelDist = 3.2;
     const repelDistSq = repelDist * repelDist;
-    const repelStrength = 0.22;
+    const repelStrength = 0.085;
 
     for (let i = 0; i < total; i++) {
       const p = particles[i];
       const mass = p.mass;
       const role = p.cosmicRole || 0.5;
 
-      // Agitazione termica + lieve turbolenza fluida cosmica
-      const thermal = (0.14 - 0.05 * gravityRamp) * (prefersReducedMotion ? 0.25 : 1);
+      // Lieve agitazione termica
+      const thermal = (0.075 - 0.03 * gravityRamp) * (prefersReducedMotion ? 0.25 : 1);
       p.vx += (Math.random() - 0.5) * thermal * dt;
       p.vy += (Math.random() - 0.5) * thermal * dt;
 
-      // Pressione interna del gas (impedisce ai pallini di sovrapporsi in grumi bianchi)
+      // Pressione gassosa a cortissimo raggio (3.2px)
       if (p.x >= -SH_CELL && p.x < viewW + SH_CELL && p.y >= -SH_CELL && p.y < viewH + SH_CELL) {
         const cxCell = clamp(Math.floor(p.x / SH_CELL) + 1, 0, shCols - 1);
         const cyCell = clamp(Math.floor(p.y / SH_CELL) + 1, 0, shRows - 1);
@@ -785,7 +791,7 @@
                 const rdx = p.x - q.x;
                 const rdy = p.y - q.y;
                 const rDistSq = rdx * rdx + rdy * rdy;
-                if (rDistSq < repelDistSq && rDistSq > 0.01) {
+                if (rDistSq < repelDistSq && rDistSq > 0.001) {
                   const rDist = Math.sqrt(rDistSq);
                   const push = (1 - rDist / repelDist) * repelStrength * dt;
                   p.vx += (rdx / rDist) * push;
@@ -798,52 +804,54 @@
         }
       }
 
-      // ~14% degli atomi rimane come gas diffuso nei grandi vuoti intergalattici
-      if (gravityRamp > 0.001 && role < 0.86) {
-        // a) Flusso lungo i filamenti curvi della rete cosmica
-        const filAffinity = role < 0.44 ? 1.0 : 0.35;
-        let bestFilDistSq = Infinity;
-        let bestFilDx = 0;
-        let bestFilDy = 0;
-        let bestFilTangentX = 0;
-        let bestFilTangentY = 0;
+      // ~12% degli atomi resta come pulviscolo remoto nei vuoti cosmici
+      if (gravityRamp > 0.001 && role < 0.88) {
+        if (role < 0.48) {
+          // a) Filamenti sottili e nitidi della rete cosmica (~6-12px di spessore)
+          let bestFilDistSq = Infinity;
+          let bestFilDx = 0;
+          let bestFilDy = 0;
+          let bestFilTangentX = 0;
+          let bestFilTangentY = 0;
 
-        for (let f = 0; f < filCount; f++) {
-          const fil = filaments[f];
-          const abx = fil.bx - fil.ax;
-          const aby = fil.by - fil.ay;
-          const t = clamp(((p.x - fil.ax) * abx + (p.y - fil.ay) * aby) / fil.lenSq, 0, 1);
-          const curve = Math.sin(t * Math.PI) * fil.bend;
-          const projX = fil.ax + abx * t + fil.nx * curve;
-          const projY = fil.ay + aby * t + fil.ny * curve;
-          const dx = projX - p.x;
-          const dy = projY - p.y;
-          const dSq = dx * dx + dy * dy;
-          if (dSq < bestFilDistSq) {
-            bestFilDistSq = dSq;
-            bestFilDx = dx;
-            bestFilDy = dy;
-            const len = Math.sqrt(fil.lenSq) || 1;
-            bestFilTangentX = abx / len;
-            bestFilTangentY = aby / len;
+          for (let f = 0; f < filCount; f++) {
+            const fil = filaments[f];
+            const abx = fil.bx - fil.ax;
+            const aby = fil.by - fil.ay;
+            const t = clamp(((p.x - fil.ax) * abx + (p.y - fil.ay) * aby) / fil.lenSq, 0, 1);
+            const curve = Math.sin(t * Math.PI) * fil.bend;
+            const targetX = fil.ax + abx * t + fil.nx * (curve + (p.filSpread || 0));
+            const targetY = fil.ay + aby * t + fil.ny * (curve + (p.filSpread || 0));
+            const dx = targetX - p.x;
+            const dy = targetY - p.y;
+            const dSq = dx * dx + dy * dy;
+            if (dSq < bestFilDistSq) {
+              bestFilDistSq = dSq;
+              bestFilDx = dx;
+              bestFilDy = dy;
+              const len = Math.sqrt(fil.lenSq) || 1;
+              bestFilTangentX = abx / len;
+              bestFilTangentY = aby / len;
+            }
+          }
+
+          const filDist = Math.sqrt(bestFilDistSq) || 1;
+          if (filDist > 1.5) {
+            const falloff = filDist < 260 ? 1 - filDist / 260 : 0.08;
+            const filPull = (0.015 + 0.075 * falloff) * gravityRamp * mass * dt;
+            p.vx += (bestFilDx / filDist) * filPull;
+            p.vy += (bestFilDy / filDist) * filPull;
+          }
+          // Lento scorrimento del gas lungo il filamento verso i nodi
+          if (filDist < 16) {
+            const streamDir = i % 2 === 0 ? 1 : -1;
+            p.vx += bestFilTangentX * 0.008 * streamDir * gravityRamp * dt;
+            p.vy += bestFilTangentY * 0.008 * streamDir * gravityRamp * dt;
           }
         }
 
-        const filDist = Math.sqrt(bestFilDistSq) || 1;
-        if (filDist > 22 && filDist < 240) {
-          const filPull = (1 - filDist / 240) * 0.048 * filAffinity * gravityRamp * mass * dt;
-          p.vx += (bestFilDx / filDist) * filPull;
-          p.vy += (bestFilDy / filDist) * filPull;
-        }
-        // Leggera corrente lungo il filamento verso le nebulose
-        if (filDist < 55 && role < 0.44) {
-          const streamDir = i % 2 === 0 ? 1 : -1;
-          p.vx += bestFilTangentX * 0.014 * streamDir * gravityRamp * dt;
-          p.vy += bestFilTangentY * 0.014 * streamDir * gravityRamp * dt;
-        }
-
-        // b) Attrazione ampia e rotazione orbitale nelle 5 grandi nebulose
-        const nodeAffinity = role >= 0.44 ? 1.0 : 0.42;
+        // b) Nodi / Ammassi pieni (nessun buco centrale!) con lieve rotazione
+        const nodeAffinity = role >= 0.48 ? 1.0 : 0.14;
         let nearestNodeDist = Infinity;
 
         for (let n = 0; n < nodeCount; n++) {
@@ -854,45 +862,36 @@
           const dist = Math.sqrt(distSq);
           if (dist < nearestNodeDist) nearestNodeDist = dist;
 
-          if (dist > 340) continue;
+          if (dist > 280) continue;
 
-          // Raggio morbido ampio (sqrt(9500) ~ 97px) per nebulose estese e ariose
-          const softSq = distSq + 9500;
-          const gPull = (node.mass * 165 * nodeAffinity * gravityRamp * mass * dt) / softSq;
-          const nx = dx / Math.max(12, dist);
-          const ny = dy / Math.max(12, dist);
+          // Raggio morbido calibrato (sqrt(1400) ~ 37px) per ammassi pieni e distanti
+          const softSq = distSq + 1400;
+          const gPull = (node.mass * 72 * nodeAffinity * gravityRamp * mass * dt) / softSq;
+          const nx = dx / Math.max(4, dist);
+          const ny = dy / Math.max(4, dist);
           p.vx += nx * gPull;
           p.vy += ny * gPull;
 
-          // Ampia rotazione a spirale della nebulosa (equilibrio centrifugo)
-          if (dist < 220) {
-            const haloNorm = 1 - dist / 220;
-            const tang = (0.058 * haloNorm * node.mass * gravityRamp * dt) * node.spin;
+          if (dist > 3 && dist < 52) {
+            const haloNorm = 1 - dist / 52;
+            const tang = (0.022 * haloNorm * node.mass * gravityRamp * dt) * node.spin;
             p.vx += -ny * tang;
             p.vy += nx * tang;
-
-            // Pressione termica del nucleo esteso (r < 48px)
-            if (dist < 48) {
-              const pressure = (1 - dist / 48) * 0.095 * gravityRamp * dt;
-              p.vx -= nx * pressure;
-              p.vy -= ny * pressure;
-            }
           }
         }
 
-        // c) Riscaldamento cromatico graduale nelle regioni dense delle nebulose
-        if (nearestNodeDist < 72) {
-          if (p.species === 'H' && Math.random() < 0.05) {
-            p.colorIdx = nearestNodeDist < 20 && Math.random() < 0.25 ? 0 : 8; // H-alfa magenta
-          } else if (p.species === 'He' && Math.random() < 0.05) {
-            p.colorIdx = nearestNodeDist < 18 && Math.random() < 0.25 ? 0 : 7; // Oro caldo
+        // c) Riscaldamento cromatico nei nuclei compatti degli ammassi (oro / magenta / bianco caldo)
+        if (nearestNodeDist < 24) {
+          if (p.species === 'H' && Math.random() < 0.06) {
+            p.colorIdx = nearestNodeDist < 9 ? 0 : 8;
+          } else if (p.species === 'He' && Math.random() < 0.06) {
+            p.colorIdx = nearestNodeDist < 8 ? 0 : 7;
           }
         } else if (p.colorIdx !== p.baseColorIdx && Math.random() < 0.03) {
           p.colorIdx = p.baseColorIdx;
         }
       }
 
-      // Calamita del mouse
       if (pointerActive) {
         const mdx = p.x - pointer.x;
         const mdy = p.y - pointer.y;
@@ -904,18 +903,18 @@
           const nx = mdx / dist;
           const ny = mdy / dist;
           if (isAttracting) {
-            const pull = smooth * magnetForce * 1.15 * dt;
-            p.vx -= nx * pull + ny * pull * 0.25;
-            p.vy -= ny * pull - nx * pull * 0.25;
+            const pull = smooth * magnetForce * 0.9 * dt;
+            p.vx -= nx * pull + ny * pull * 0.22;
+            p.vy -= ny * pull - nx * pull * 0.22;
           } else {
-            const push = smooth * magnetForce * 0.9 * dt;
-            p.vx += nx * push + pointer.vx * smooth * 0.04;
-            p.vy += ny * push + pointer.vy * smooth * 0.04;
+            const push = smooth * magnetForce * 0.75 * dt;
+            p.vx += nx * push + pointer.vx * smooth * 0.035;
+            p.vy += ny * push + pointer.vy * smooth * 0.035;
           }
         }
       }
 
-      const damp = Math.pow(0.945, dt);
+      const damp = Math.pow(0.935, dt);
       p.vx *= damp;
       p.vy *= damp;
       p.x += p.vx * dt;
@@ -1374,13 +1373,14 @@
         }
 
         const isCosmicView = simState === STATE.COSMIC_WEB || simState === STATE.CAMERA_ZOOM_OUT;
+        const isVoidSpeck = isCosmicView && (p.cosmicRole || 0) >= 0.88;
         const alpha =
           p.alphaBase *
           particleMergeFade *
           macroFadeDuringMicro *
-          (isCosmicView ? 0.66 : 1);
-        const radius = dotBase * p.sizeFactor;
-        const spriteRadius = radius * (isCosmicView ? 2.55 : 3.4) * Math.min(zoomScale, 5.5);
+          (isVoidSpeck ? 0.34 : isCosmicView ? 0.78 : 1);
+        const radius = dotBase * p.sizeFactor * (isCosmicView ? 0.44 : 1);
+        const spriteRadius = radius * (isCosmicView ? 2.5 : 3.4) * Math.min(zoomScale, 5.5);
 
         ctx.globalAlpha = alpha;
         ctx.drawImage(
