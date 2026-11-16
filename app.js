@@ -7,33 +7,40 @@
    */
   const DEFAULT_CONFIG = {
     particleCount: 4000,
-    dotSize: 1.9,
+    dotSize: 1.8,
     brownianStrength: 0.42,
     edgeSoftness: 7,
     damping: 0.885,
     magnetRadius: 145,
     magnetForce: 1.3,
-    growDurationMs: 1450,
+    growDurationMs: 1400,
   };
 
   const CONFIG = { ...DEFAULT_CONFIG };
 
   /**
-   * Registro estensibile delle epoche cosmiche (Step 1: Singolarità + Idrogeno).
-   * Nei prossimi step basterà aggiungere qui Nebulose, Stelle e Ferro nel Sangue.
+   * Cronologia delle epoche sull'asse temporale in basso (Step 1):
+   * 0: Singolarità / Big Bang (riavvolge al punto bianco iniziale)
+   * 1: Quark e Gluoni / Adronizzazione (zoom nella particella isolata)
+   * 2: Primi Atomi / Idrogeno (scena attiva + impulso)
    */
   const ERAS = [
     { id: 'singularity', t: 0.0, groupId: 2, colorIdx: 0 },
-    { id: 'hydrogen', t: 0.26, groupId: 3, colorIdx: 3 },
+    { id: 'quarks', t: 0.16, groupId: 3, colorIdx: 6 },
+    { id: 'hydrogen', t: 0.34, groupId: 4, colorIdx: 5 },
   ];
 
-  // Palette nebulosa vibrante (indice -> [R, G, B])
-  const NEBULA_COLORS = [
-    [255, 198, 92],   // 0: Oro plasma / Nucleo / Singolarità
-    [242, 72, 174],   // 1: Magenta nebulosa
-    [156, 94, 255],   // 2: Viola cosmico
-    [52, 232, 244],   // 3: Turchese / Elettrone / Idrogeno
-    [245, 248, 255],  // 4: Bianco stellare ad alta energia
+  // Palette luminosa: bianchi puri per Big Bang + colori QCD (R,G,B) + spettro Idrogeno
+  const PALETTE = [
+    [255, 255, 255],  // 0: Bianco puro (Singolarità, Big Bang, Gluoni, Bianco stellare)
+    [208, 216, 230],  // 1: Bianco argento sfumato (profondità esplosione Big Bang)
+    [255, 78, 108],   // 2: Quark Rosso (QCD)
+    [56, 238, 156],   // 3: Quark Verde (QCD)
+    [76, 166, 255],   // 4: Quark Blu (QCD)
+    [68, 232, 246],   // 5: Turchese / Elettrone / Idrogeno
+    [158, 106, 255],  // 6: Viola cosmico / Orbita / Asse
+    [238, 82, 178],   // 7: Magenta / Idrogeno
+    [255, 206, 110],  // 8: Oro caldo (Nucleo protone composto)
   ];
 
   // Riferimenti DOM
@@ -43,6 +50,7 @@
 
   const btnSeed = document.getElementById('btn-seed');
   const btnNodeSingularity = document.getElementById('btn-node-singularity');
+  const btnNodeQuarks = document.getElementById('btn-node-quarks');
   const btnNodeHydrogen = document.getElementById('btn-node-hydrogen');
 
   const tuningPanel = document.getElementById('tuning-panel');
@@ -70,18 +78,21 @@
     prefersReducedMotion = e.matches;
   });
 
-  // Stato globale della simulazione
+  // Macchina a stati cronologica
   const STATE = {
     IDLE_SEED: 'IDLE_SEED',
     GROWING: 'GROWING',
-    EXPLODING: 'EXPLODING',
+    BIG_BANG: 'BIG_BANG',
+    SLOW_MO_RETICLE: 'SLOW_MO_RETICLE',
+    CAMERA_ZOOM_IN: 'CAMERA_ZOOM_IN',
+    MICRO_QUARKS: 'MICRO_QUARKS',
+    CAMERA_ZOOM_OUT: 'CAMERA_ZOOM_OUT',
     SETTLED: 'SETTLED',
     IMPLODING: 'IMPLODING',
   };
 
   let simState = STATE.IDLE_SEED;
   let stateTime = 0;
-  let explosionElapsed = 0;
   let orbitAngle = 0;
   let lastTimestamp = 0;
   let rafId = null;
@@ -92,7 +103,7 @@
   let viewH = Math.floor(window.innerHeight);
   let dpr = Math.min(window.devicePixelRatio || 1, 2);
 
-  // Griglie layout e Chamfer Distance Field (1..8 = HYDROGEN, 9 = Nucleo, 10 = Orbita, 11 = Asse, 12.. = Nodi epoche)
+  // Griglie layout e Chamfer Distance Field
   let zoneGrid = new Uint8Array(0);
   const DF_SCALE = 2;
   let dfW = 0;
@@ -114,7 +125,7 @@
     nodes: [],
   };
 
-  // Pool finito di particelle (incluse quelle dinamiche dell'elettrone in orbita)
+  // Pool finito di particelle macroscopiche
   let particles = [];
   const ELECTRON_COUNT = 58;
 
@@ -125,9 +136,30 @@
   let shHead = new Int32Array(0);
   let shNext = new Int32Array(0);
 
-  // Sprite glow pre-renderizzati per prestazioni a 60fps con blending additivo
+  // Camera & Riquadro bianco sulla particella isolata
+  let camX = 0;
+  let camY = 0;
+  let camZoom = 1;
+  let zoomStartX = 0;
+  let zoomStartY = 0;
+  let heroIdx = 0;
+  let reticleSize = 96;
+  let reticleAlpha = 0;
+  let returnToSettledAfterMicro = false;
+
+  // Micro-scena: 3 Quark (R, G, B) + Gluoni + Elettrone
+  const micro = {
+    time: 0,
+    quarks: [],
+    gluons: [],
+    gluonTimer: 0,
+    electron: { active: false, x: 0, y: 0, vx: 0, vy: 0, angle: 0, radius: 0, trail: [] },
+    opacity: 0,
+  };
+
+  // Sprite glow pre-renderizzati per prestazioni a 60fps
   const SPRITE_SIZE = 64;
-  const glowSprites = NEBULA_COLORS.map(([r, g, b]) => {
+  const glowSprites = PALETTE.map(([r, g, b]) => {
     const sc = document.createElement('canvas');
     sc.width = SPRITE_SIZE;
     sc.height = SPRITE_SIZE;
@@ -136,9 +168,9 @@
 
     const grad = sctx.createRadialGradient(half, half, 0, half, half, half);
     grad.addColorStop(0.0, 'rgba(255, 255, 255, 0.98)');
-    grad.addColorStop(0.18, `rgba(${r}, ${g}, ${b}, 0.94)`);
-    grad.addColorStop(0.42, `rgba(${r}, ${g}, ${b}, 0.34)`);
-    grad.addColorStop(0.74, `rgba(${r}, ${g}, ${b}, 0.08)`);
+    grad.addColorStop(0.2, `rgba(${r}, ${g}, ${b}, 0.92)`);
+    grad.addColorStop(0.45, `rgba(${r}, ${g}, ${b}, 0.32)`);
+    grad.addColorStop(0.76, `rgba(${r}, ${g}, ${b}, 0.08)`);
     grad.addColorStop(1.0, `rgba(${r}, ${g}, ${b}, 0)`);
 
     sctx.fillStyle = grad;
@@ -157,10 +189,10 @@
     downTime: 0,
     downX: 0,
     downY: 0,
-    hoverGroup: 0, // 0, 2 (nodo Singolarità), 3 (nodo Idrogeno), 99 (singolarità centrale)
+    hoverGroup: 0, // 0, 2 (Singolarità), 3 (Quarks), 4 (Idrogeno), 99 (seed centrale)
   };
 
-  // Stato animazione singolarità centrale e fusione in ritorno
+  // Stato singolarità centrale e fusione in ritorno
   let seedHoverCharge = 0;
   let seedCurrentRadius = 15;
   let seedStartRadius = 15;
@@ -168,7 +200,7 @@
   let implodeMergeTime = 0;
   let implodeMergeAlpha = 0;
 
-  // Onda di impulso energetico dal nodo Idrogeno / atomo
+  // Onda di impulso energetico
   let pulseWave = { active: false, x: 0, y: 0, prevRadius: 0, radius: 0, maxRadius: 0, power: 0 };
 
   function clamp(val, min, max) {
@@ -179,13 +211,18 @@
     return t * t * t;
   }
 
+  function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+  }
+
   function easeInOutQuad(t) {
     return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
   }
 
-  /**
-   * Calcola la posizione orbitale dell'elettrone sull'ellisse inclinata attorno al nucleo.
-   */
+  function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+
   function getElectronPosition(angleOffset = 0) {
     const { atom } = layoutBounds;
     const a = orbitAngle + angleOffset;
@@ -199,10 +236,6 @@
     };
   }
 
-  /**
-   * Calcola le quote bersaglio di ciascuna zona statica in base alla sua area:
-   * ogni lettera, componente dell'atomo e parte dell'asse mantiene la stessa densità.
-   */
   function updateZoneTargets() {
     if (totalMaskArea <= 0) return;
     const structuralBudget = Math.max(100, CONFIG.particleCount - ELECTRON_COUNT);
@@ -220,12 +253,6 @@
     shHead = new Int32Array(shCols * shRows);
   }
 
-  /**
-   * Costruisce la scena di presentazione (Step 1):
-   * - Modello dell'atomo di Idrogeno (nucleo + orbita)
-   * - Titolo HYDROGEN formato dagli atomi
-   * - Asse del tempo in basso formato dagli atomi con i primi 2 nodi (Singolarità, Idrogeno)
-   */
   function buildLayoutMask() {
     viewW = Math.max(320, Math.floor(window.innerWidth));
     viewH = Math.max(320, Math.floor(window.innerHeight));
@@ -244,7 +271,6 @@
     const seedIdleRadius = clamp(minDim * 0.021, 11, 19);
     const seedMaxRadius = clamp(minDim * 0.16, 86, 155);
 
-    // Geometria verticale armonica: Atomo -> HYDROGEN -> Asse del tempo
     const atomY = viewH * 0.25;
     const orbitRx = clamp(minDim * 0.145, 58, 128);
     const orbitRy = orbitRx * 0.52;
@@ -256,7 +282,7 @@
     const tlW = clamp(viewW * 0.58, 240, 680);
     const tlLeft = cx - tlW * 0.5;
     const tlRight = cx + tlW * 0.5;
-    const nodeR = clamp(minDim * 0.024, 14, 21);
+    const nodeR = clamp(minDim * 0.023, 13, 20);
 
     const eraNodes = ERAS.map((era) => ({
       ...era,
@@ -277,6 +303,9 @@
 
     if (simState === STATE.IDLE_SEED) {
       seedCurrentRadius = seedIdleRadius;
+      camX = cx;
+      camY = cy;
+      camZoom = 1;
     }
 
     const offscreen = document.createElement('canvas');
@@ -329,7 +358,7 @@
       };
     };
 
-    // Zone 1..8: ogni lettera di HYDROGEN con gradiente nebulosa (magenta -> viola -> turchese)
+    // Zone 1..8: HYDROGEN
     const fontSize = clamp(viewW * 0.122, 42, 152);
     const letterSpacing = fontSize * 0.085;
     octx.font = `900 ${fontSize}px -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif`;
@@ -338,7 +367,7 @@
     const totalWordWidth =
       widths.reduce((acc, w) => acc + w, 0) + letterSpacing * Math.max(0, chars.length - 1);
 
-    const letterColors = [1, 1, 2, 2, 2, 3, 3, 3];
+    const letterColors = [7, 7, 6, 6, 6, 5, 5, 5];
     let cursorX = cx - totalWordWidth / 2;
     for (let i = 0; i < chars.length; i++) {
       const charX = cursorX;
@@ -353,16 +382,16 @@
       cursorX += widths[i] + letterSpacing;
     }
 
-    // Zone 9: Nucleo dell'atomo di Idrogeno (1 protone: oro/magenta caldo)
-    registerZone(9, 1, 0, (c) => {
+    // Zone 9: Nucleo protone (oro/magenta)
+    registerZone(9, 1, 8, (c) => {
       c.fillStyle = '#ffffff';
       c.beginPath();
       c.arc(cx, atomY, nucleusR, 0, Math.PI * 2);
       c.fill();
     });
 
-    // Zone 10: Anello orbitale ellittico inclinato (viola cosmico)
-    registerZone(10, 1, 2, (c) => {
+    // Zone 10: Orbita elettronica (viola)
+    registerZone(10, 1, 6, (c) => {
       c.strokeStyle = '#ffffff';
       c.lineWidth = clamp(orbitRx * 0.068, 4.5, 7);
       c.beginPath();
@@ -370,29 +399,28 @@
       c.stroke();
     });
 
-    // Zone 11: Barra dell'asse del tempo in basso (viola/indaco morbido)
-    registerZone(11, 1, 2, (c) => {
+    // Zone 11: Barra dell'asse temporale
+    registerZone(11, 1, 6, (c) => {
       c.fillStyle = '#ffffff';
-      const barH = 5.5;
+      const barH = 4.5;
       c.beginPath();
       c.roundRect(tlLeft, tlY - barH / 2, tlW, barH, barH / 2);
       c.fill();
     });
 
-    // Zone 12+: Nodi dell'asse del tempo (Step 1: Singolarità e Idrogeno)
+    // Zone 12+: Nodi cronologici (0: Singolarità, 1: Quark/Gluoni, 2: Idrogeno)
     eraNodes.forEach((node, idx) => {
       const zId = 12 + idx;
       registerZone(zId, node.groupId, node.colorIdx, (c) => {
         c.strokeStyle = '#ffffff';
         c.fillStyle = '#ffffff';
-        c.lineWidth = clamp(node.r * 0.34, 5, 7);
+        c.lineWidth = clamp(node.r * 0.34, 4.5, 6.5);
         c.beginPath();
         c.arc(node.x, node.y, node.r, 0, Math.PI * 2);
         c.stroke();
 
-        // Nucleo centrale del nodo
         c.beginPath();
-        c.arc(node.x, node.y, Math.max(5, node.r * 0.35), 0, Math.PI * 2);
+        c.arc(node.x, node.y, Math.max(4.5, node.r * 0.34), 0, Math.PI * 2);
         c.fill();
       });
     });
@@ -522,15 +550,15 @@
       anchorX: anchor.x,
       anchorY: anchor.y,
       currentZone: 0,
-      colorIdx: isElectron ? 3 : Math.floor(Math.random() * 4),
+      colorIdx: Math.random() < 0.68 ? 0 : 1, // Sfumature di bianco iniziali
       sizeFactor: isElectron ? 0.85 + Math.random() * 0.45 : 0.72 + Math.random() * 0.58,
-      alphaBase: isElectron ? 0.85 + Math.random() * 0.15 : 0.72 + Math.random() * 0.25,
+      alphaBase: isElectron ? 0.85 + Math.random() * 0.15 : 0.52 + Math.random() * 0.44,
       expelRank: Math.random(),
       mobility: 0.82 + Math.random() * 0.36,
-      burstDrag: 0.945 + Math.random() * 0.025,
-      returnDelay: 350 + Math.random() * 1950,
-      returnDuration: 850 + Math.random() * 1350,
-      magneticWake: 1,
+      burstDrag: 0.948 + Math.random() * 0.022,
+      returnDelay: 250 + Math.random() * 1400,
+      returnDuration: 850 + Math.random() * 1300,
+      magneticWake: 0,
     };
   }
 
@@ -559,6 +587,7 @@
         p.goalZone = zId;
         p.anchorX = anchor.x;
         p.anchorY = anchor.y;
+        p.magneticWake = simState === STATE.SETTLED ? 1 : 0;
         particles.push(p);
       }
     } else if (particles.length > targetCount) {
@@ -568,40 +597,31 @@
     shNext = new Int32Array(particles.length);
   }
 
-  /**
-   * Sincronizza le hit-area trasparenti con la singolarità centrale e i 2 nodi dell'asse.
-   */
   function syncHitboxes() {
     const { cx, cy, seedIdleRadius, nodes } = layoutBounds;
 
-    const seedHitR = Math.max(seedIdleRadius * 2.3, 36);
+    const seedHitR = Math.max(seedIdleRadius * 2.4, 38);
     btnSeed.style.left = `${cx - seedHitR}px`;
     btnSeed.style.top = `${cy - seedHitR}px`;
     btnSeed.style.width = `${seedHitR * 2}px`;
     btnSeed.style.height = `${seedHitR * 2}px`;
 
-    const nodeSing = nodes[0];
-    if (nodeSing) {
-      const hitR = nodeSing.r + 14;
-      btnNodeSingularity.style.left = `${nodeSing.x - hitR}px`;
-      btnNodeSingularity.style.top = `${nodeSing.y - hitR}px`;
-      btnNodeSingularity.style.width = `${hitR * 2}px`;
-      btnNodeSingularity.style.height = `${hitR * 2}px`;
-    }
-
-    const nodeHydro = nodes[1];
-    if (nodeHydro) {
-      const hitR = nodeHydro.r + 14;
-      btnNodeHydrogen.style.left = `${nodeHydro.x - hitR}px`;
-      btnNodeHydrogen.style.top = `${nodeHydro.y - hitR}px`;
-      btnNodeHydrogen.style.width = `${hitR * 2}px`;
-      btnNodeHydrogen.style.height = `${hitR * 2}px`;
-    }
+    const hitButtons = [btnNodeSingularity, btnNodeQuarks, btnNodeHydrogen];
+    nodes.forEach((node, i) => {
+      const btn = hitButtons[i];
+      if (!btn || !node) return;
+      const hitR = node.r + 14;
+      btn.style.left = `${node.x - hitR}px`;
+      btn.style.top = `${node.y - hitR}px`;
+      btn.style.width = `${hitR * 2}px`;
+      btn.style.height = `${hitR * 2}px`;
+    });
 
     const showSeed = simState === STATE.IDLE_SEED;
-    const showNodes = simState === STATE.SETTLED || simState === STATE.EXPLODING;
+    const showNodes = simState === STATE.SETTLED;
     btnSeed.hidden = !showSeed;
     btnNodeSingularity.hidden = !showNodes;
+    btnNodeQuarks.hidden = !showNodes;
     btnNodeHydrogen.hidden = !showNodes;
   }
 
@@ -610,22 +630,25 @@
     simState = STATE.GROWING;
     stateTime = 0;
     seedStartRadius = seedCurrentRadius;
+    camX = layoutBounds.cx;
+    camY = layoutBounds.cy;
+    camZoom = 1;
     syncHitboxes();
   }
 
   /**
-   * Big Bang: scaraventa tutte le particelle di plasma caldo oltre i bordi dello schermo;
-   * ciascuna rientra con il proprio tempo formando la scena dell'Idrogeno e l'asse temporale.
+   * Big Bang puramente in sfumature di bianco:
+   * proietta la materia verso l'esterno separandola prima del rallentatore e del riquadro bianco.
    */
-  function triggerExplosionFromSphere() {
-    simState = STATE.EXPLODING;
+  function triggerWhiteBigBang() {
+    simState = STATE.BIG_BANG;
     stateTime = 0;
-    explosionElapsed = 0;
+    returnToSettledAfterMicro = false;
 
     const { cx, cy } = layoutBounds;
     const sphereR = seedCurrentRadius;
     const diag = Math.hypot(viewW, viewH);
-    const speedScale = prefersReducedMotion ? 0.28 : 1;
+    const speedScale = prefersReducedMotion ? 0.35 : 1;
 
     if (particles.length !== CONFIG.particleCount) {
       syncParticleCount(true);
@@ -645,20 +668,17 @@
       p.y = cy + Math.sin(angle) * r;
 
       const burstSpeed =
-        (0.28 + radialNorm * 0.72 + Math.random() * 0.95) * (diag * 0.044) * speedScale;
-      const swirl = (Math.random() - 0.5) * 0.34;
+        (0.22 + radialNorm * 0.68 + Math.random() * 0.72) * (diag * 0.033) * speedScale;
+      const swirl = (Math.random() - 0.5) * 0.28;
       p.vx = Math.cos(angle + swirl) * burstSpeed;
       p.vy = Math.sin(angle + swirl) * burstSpeed;
 
-      // Colori caldi di plasma primordiale al momento dell'esplosione
-      p.colorIdx = Math.random() < 0.22 ? 4 : Math.floor(Math.random() * 4);
-      p.burstDrag = 0.942 + Math.random() * 0.026;
-      p.returnDelay = prefersReducedMotion
-        ? 160 + Math.random() * 420
-        : p.isElectron
-          ? 650 + Math.random() * 1100
-          : 320 + Math.random() * 2000;
-      p.returnDuration = prefersReducedMotion ? 500 + Math.random() * 500 : 850 + Math.random() * 1450;
+      // Solo sfumature di bianco durante l'esplosione
+      p.colorIdx = Math.random() < 0.65 ? 0 : 1;
+      p.alphaBase = 0.45 + Math.random() * 0.52;
+      p.burstDrag = 0.946 + Math.random() * 0.022;
+      p.returnDelay = 250 + Math.random() * 1400;
+      p.returnDuration = 850 + Math.random() * 1300;
       p.magneticWake = 0;
       p.currentZone = 0;
     }
@@ -667,10 +687,143 @@
   }
 
   /**
-   * Riavvolge tutte le particelle al centro, le raggruppa e le fonde nella singolarità unica.
+   * Seleziona la particella bersaglio per il riquadro bianco:
+   * - Dopo il Big Bang: una singola particella isolata nello spazio aperto.
+   * - Dalla scena Idrogeno (Nodo 2): una particella del nucleo dell'atomo.
    */
+  function pickHeroParticle(preferNucleus) {
+    if (preferNucleus) {
+      let bestIdx = 0;
+      let bestDist = Infinity;
+      const { atom } = layoutBounds;
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        if (p.isElectron) continue;
+        const d = Math.hypot(p.x - atom.x, p.y - atom.y);
+        if (d < bestDist) {
+          bestDist = d;
+          bestIdx = i;
+        }
+      }
+      heroIdx = bestIdx;
+      return particles[heroIdx];
+    }
+
+    const minX = viewW * 0.25;
+    const maxX = viewW * 0.75;
+    const minY = viewH * 0.24;
+    const maxY = viewH * 0.72;
+
+    let bestIdx = 0;
+    let bestMinDistSq = -1;
+    const step = Math.max(1, Math.floor(particles.length / 180));
+
+    for (let i = 0; i < particles.length; i += step) {
+      const p = particles[i];
+      if (p.x < minX || p.x > maxX || p.y < minY || p.y > maxY) continue;
+
+      let nearestSq = Infinity;
+      for (let j = 0; j < particles.length; j += 4) {
+        if (j === i) continue;
+        const q = particles[j];
+        const dx = p.x - q.x;
+        const dy = p.y - q.y;
+        const dSq = dx * dx + dy * dy;
+        if (dSq < nearestSq) nearestSq = dSq;
+      }
+
+      if (nearestSq > bestMinDistSq) {
+        bestMinDistSq = nearestSq;
+        bestIdx = i;
+      }
+    }
+
+    heroIdx = bestIdx;
+    const hero = particles[heroIdx];
+    hero.colorIdx = 0;
+    hero.alphaBase = 1;
+    return hero;
+  }
+
+  /**
+   * Inizializza la micro-scena interna alla particella:
+   * 3 Quark (Rosso, Verde, Blu) separati che si avvicinano scambiandosi Gluoni di luce,
+   * formando un Protone che poi cattura il primo Elettrone (primo atomo di Idrogeno).
+   */
+  function initMicroScene() {
+    const { cx, cy } = layoutBounds;
+    const minDim = Math.min(viewW, viewH);
+    const startR = clamp(minDim * 0.21, 90, 175);
+
+    micro.time = 0;
+    micro.gluons = [];
+    micro.gluonTimer = 0;
+    micro.opacity = 0;
+
+    // 3 Quark con carica di colore QCD (Rosso, Verde, Blu)
+    const quarkColors = [2, 3, 4];
+    const baseAngles = [-Math.PI / 2, Math.PI / 6 + 0.15, (5 * Math.PI) / 6 - 0.15];
+
+    micro.quarks = quarkColors.map((colorIdx, idx) => {
+      const a = baseAngles[idx];
+      const x = cx + Math.cos(a) * startR;
+      const y = cy + Math.sin(a) * startR;
+      // Lento momento angolare orbitale mentre si attraggono verso il centro comune
+      const tangAngle = a + Math.PI / 2;
+      const tangSpeed = 1.65;
+
+      // Sotto-particelle luminose che compongono ogni singolo quark
+      const subDots = Array.from({ length: 24 }, () => {
+        const sa = Math.random() * Math.PI * 2;
+        const sr = Math.sqrt(Math.random()) * clamp(minDim * 0.026, 11, 20);
+        return {
+          ox: Math.cos(sa) * sr,
+          oy: Math.sin(sa) * sr,
+          phase: Math.random() * Math.PI * 2,
+          size: 0.7 + Math.random() * 0.75,
+        };
+      });
+
+      return {
+        x,
+        y,
+        vx: Math.cos(tangAngle) * tangSpeed,
+        vy: Math.sin(tangAngle) * tangSpeed,
+        colorIdx,
+        subDots,
+      };
+    });
+
+    micro.electron = {
+      active: false,
+      x: cx + minDim * 0.56,
+      y: cy - minDim * 0.28,
+      angle: -0.45,
+      radius: minDim * 0.62,
+      targetRadius: clamp(minDim * 0.25, 105, 195),
+      trail: [],
+    };
+  }
+
+  /**
+   * Avvia il rallentatore con riquadro bianco e zoom dentro una particella (anche dal Nodo 2 dell'asse).
+   */
+  function enterMicroQuarksView(fromSettled) {
+    returnToSettledAfterMicro = fromSettled;
+    pickHeroParticle(fromSettled);
+    simState = STATE.SLOW_MO_RETICLE;
+    stateTime = 0;
+    reticleSize = 112;
+    reticleAlpha = 0;
+    camX = layoutBounds.cx;
+    camY = layoutBounds.cy;
+    camZoom = 1;
+    initMicroScene();
+    syncHitboxes();
+  }
+
   function implodeToSeed() {
-    if (simState !== STATE.SETTLED && simState !== STATE.EXPLODING) return;
+    if (simState !== STATE.SETTLED) return;
     simState = STATE.IMPLODING;
     stateTime = 0;
     implodeMerging = false;
@@ -690,11 +843,8 @@
     syncHitboxes();
   }
 
-  /**
-   * Impulso energetico dal nucleo di Idrogeno (cliccando il nodo Idrogeno sull'asse).
-   */
   function triggerHydrogenPulse() {
-    if (simState !== STATE.SETTLED && simState !== STATE.EXPLODING) return;
+    if (simState !== STATE.SETTLED) return;
     const { atom } = layoutBounds;
     pulseWave = {
       active: true,
@@ -712,12 +862,12 @@
 
     if (simState === STATE.IDLE_SEED) {
       const distSeed = Math.hypot(clientX - cx, clientY - cy);
-      pointer.hoverGroup = distSeed <= Math.max(seedIdleRadius * 2.3, 36) ? 99 : 0;
+      pointer.hoverGroup = distSeed <= Math.max(seedIdleRadius * 2.4, 38) ? 99 : 0;
       canvas.style.cursor = pointer.hoverGroup === 99 ? 'pointer' : 'default';
       return;
     }
 
-    if (simState === STATE.SETTLED || simState === STATE.EXPLODING) {
+    if (simState === STATE.SETTLED) {
       for (let i = 0; i < nodes.length; i++) {
         const node = nodes[i];
         const dist = Math.hypot(clientX - node.x, clientY - node.y);
@@ -753,47 +903,300 @@
     };
   }
 
+  /**
+   * Aggiorna la fisica interna della micro-scena (3 quark, scambio di gluoni, cattura elettrone).
+   */
+  function updateMicroPhysics(dtMs) {
+    const dt = Math.min(dtMs / 16.6667, 2.2);
+    micro.time += dtMs;
+
+    const { cx, cy } = layoutBounds;
+    const minDim = Math.min(viewW, viewH);
+    const quarks = micro.quarks;
+
+    // 1. Forza forte tra i 3 quark: si avvicinano e si legano in un protone danzante
+    const eqDist = clamp(minDim * 0.068, 28, 52);
+    const springStrength = micro.time > 1800 ? 0.015 : 0.0095;
+
+    for (let i = 0; i < 3; i++) {
+      const q = quarks[i];
+
+      // Richiamo verso il centro comune
+      const dxC = cx - q.x;
+      const dyC = cy - q.y;
+      q.vx += dxC * 0.0045 * dt;
+      q.vy += dyC * 0.0045 * dt;
+
+      // Interazione a coppie tra quark (attrazione forte + repulsione a cortissimo raggio)
+      for (let j = 0; j < 3; j++) {
+        if (i === j) continue;
+        const other = quarks[j];
+        const dx = other.x - q.x;
+        const dy = other.y - q.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const nx = dx / dist;
+        const ny = dy / dist;
+
+        if (dist > eqDist) {
+          const pull = (dist - eqDist) * springStrength * dt;
+          q.vx += nx * pull;
+          q.vy += ny * pull;
+        } else {
+          const push = (eqDist - dist) * 0.042 * dt;
+          q.vx -= nx * push;
+          q.vy -= ny * push;
+        }
+      }
+
+      // Leggero moto orbitale + tremolio quantistico + interazione mouse
+      q.vx += (-dyC * 0.0018 + (Math.random() - 0.5) * 0.45) * dt;
+      q.vy += (dxC * 0.0018 + (Math.random() - 0.5) * 0.45) * dt;
+
+      if (pointer.active && simState === STATE.MICRO_QUARKS) {
+        const mdx = q.x - pointer.x;
+        const mdy = q.y - pointer.y;
+        const mDist = Math.hypot(mdx, mdy);
+        if (mDist < 130 && mDist > 1) {
+          const f = (1 - mDist / 130) * 0.85 * dt;
+          q.vx += (pointer.down ? -mdx : mdx) / mDist * f;
+          q.vy += (pointer.down ? -mdy : mdy) / mDist * f;
+        }
+      }
+
+      q.vx *= Math.pow(0.935, dt);
+      q.vy *= Math.pow(0.935, dt);
+      q.x += q.vx * dt;
+      q.y += q.vy * dt;
+    }
+
+    // 2. Emissione e volo dei gluoni (particelle di luce scambiate tra i quark)
+    const avgSep =
+      (Math.hypot(quarks[0].x - quarks[1].x, quarks[0].y - quarks[1].y) +
+        Math.hypot(quarks[1].x - quarks[2].x, quarks[1].y - quarks[2].y) +
+        Math.hypot(quarks[2].x - quarks[0].x, quarks[2].y - quarks[0].y)) /
+      3;
+
+    const emitInterval = clamp(avgSep * 0.48, 38, 125);
+    micro.gluonTimer += dtMs;
+    if (micro.gluonTimer >= emitInterval && micro.gluons.length < 36) {
+      micro.gluonTimer = 0;
+      const fromIdx = Math.floor(Math.random() * 3);
+      const toIdx = (fromIdx + 1 + Math.floor(Math.random() * 2)) % 3;
+      micro.gluons.push({
+        fromIdx,
+        toIdx,
+        t: 0,
+        speed: 0.026 + Math.random() * 0.018,
+        curveOffset: (Math.random() - 0.5) * clamp(avgSep * 0.55, 22, 65),
+        colorIdx: Math.random() < 0.45 ? 0 : quarks[fromIdx].colorIdx,
+      });
+    }
+
+    for (let i = micro.gluons.length - 1; i >= 0; i--) {
+      const g = micro.gluons[i];
+      g.t += g.speed * dt;
+      if (g.t >= 1) {
+        // Piccolo scambio di impulso quando il gluone raggiunge il quark bersaglio
+        const qFrom = quarks[g.fromIdx];
+        const qTo = quarks[g.toIdx];
+        const dx = qFrom.x - qTo.x;
+        const dy = qFrom.y - qTo.y;
+        const len = Math.hypot(dx, dy) || 1;
+        qTo.vx += (dx / len) * 0.32;
+        qTo.vy += (dy / len) * 0.32;
+        micro.gluons.splice(i, 1);
+      }
+    }
+
+    // 3. Cattura del primo elettrone dopo la formazione del protone (~3.5s) -> Primo atomo di Idrogeno!
+    if (micro.time > 3500) {
+      const el = micro.electron;
+      el.active = true;
+      el.radius += (el.targetRadius - el.radius) * 0.032 * dt;
+      el.angle += 0.042 * dt;
+      el.x = cx + Math.cos(el.angle) * el.radius;
+      el.y = cy + Math.sin(el.angle) * el.radius * 0.78;
+
+      el.trail.push({ x: el.x, y: el.y, alpha: 0.75 });
+      if (el.trail.length > 34) el.trail.shift();
+      for (let i = 0; i < el.trail.length; i++) {
+        el.trail[i].alpha *= Math.pow(0.93, dt);
+      }
+    }
+  }
+
   function updateSimulation(dtMs) {
     const dt = Math.min(dtMs / 16.6667, 2.2);
     stateTime += dtMs;
 
-    const { cx, cy, seedIdleRadius, seedMaxRadius } = layoutBounds;
-
-    // Avanza l'orbita dell'elettrone dell'Idrogeno
+    const { cx, cy, seedIdleRadius, seedMaxRadius, atom } = layoutBounds;
     const orbitSpeed = prefersReducedMotion ? 0.00035 : 0.00165;
     orbitAngle = (orbitAngle + dtMs * orbitSpeed) % (Math.PI * 2);
 
+    // 0. Singolarità bianca iniziale in attesa del tocco
     if (simState === STATE.IDLE_SEED) {
       const targetHover = pointer.hoverGroup === 99 ? 1 : 0;
       seedHoverCharge += (targetHover - seedHoverCharge) * 0.12 * dt;
-
       const breathAmp = prefersReducedMotion ? 0.5 : 1.9;
-      const breath = Math.sin(stateTime * 0.003) * breathAmp;
-      seedCurrentRadius = seedIdleRadius + breath + seedHoverCharge * 6;
+      seedCurrentRadius = seedIdleRadius + Math.sin(stateTime * 0.003) * breathAmp + seedHoverCharge * 6;
       return;
     }
 
+    // 1. Espansione della sfera bianca prima del Big Bang
     if (simState === STATE.GROWING) {
       const duration = prefersReducedMotion ? CONFIG.growDurationMs * 0.65 : CONFIG.growDurationMs;
       const progress = clamp(stateTime / duration, 0, 1);
       const eased = easeInOutQuad(progress) * 0.55 + easeInCubic(progress) * 0.45;
-      const subtleTremor =
-        prefersReducedMotion ? 0 : Math.sin(stateTime * 0.038) * (progress * 1.5);
-
-      seedCurrentRadius =
-        seedStartRadius + (seedMaxRadius - seedStartRadius) * eased + subtleTremor;
+      const tremor = prefersReducedMotion ? 0 : Math.sin(stateTime * 0.038) * (progress * 1.5);
+      seedCurrentRadius = seedStartRadius + (seedMaxRadius - seedStartRadius) * eased + tremor;
 
       if (progress >= 1) {
-        triggerExplosionFromSphere();
+        triggerWhiteBigBang();
       }
       return;
     }
 
+    // 2. Esplosione Big Bang puramente in sfumature di bianco -> separazione particelle
+    if (simState === STATE.BIG_BANG) {
+      const bangDuration = prefersReducedMotion ? 550 : 880;
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        const damp = Math.pow(p.burstDrag, dt);
+        p.vx *= damp;
+        p.vy *= damp;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+      }
+
+      if (stateTime >= bangDuration) {
+        enterMicroQuarksView(false);
+      }
+      return;
+    }
+
+    // 3. Rallentatore progressivo + riquadro bianco sulla particella isolata
+    if (simState === STATE.SLOW_MO_RETICLE) {
+      const dur = prefersReducedMotion ? 900 : 1550;
+      const progress = clamp(stateTime / dur, 0, 1);
+      // Tempo rallenta fino a quasi fermarsi (0.04x)
+      const timeScale = 1 - easeOutCubic(progress) * 0.96;
+
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        const damp = Math.pow(p.burstDrag, dt * timeScale);
+        p.vx *= damp;
+        p.vy *= damp;
+        p.x += p.vx * dt * timeScale;
+        p.y += p.vy * dt * timeScale;
+      }
+
+      const hero = particles[heroIdx];
+      camX = cx + (hero.x - cx) * easeInOutQuad(progress);
+      camY = cy + (hero.y - cy) * easeInOutQuad(progress);
+      camZoom = 1 + 0.22 * easeInOutQuad(progress);
+
+      reticleAlpha = easeOutCubic(clamp(progress * 1.4, 0, 1));
+      reticleSize = 112 - 64 * easeOutCubic(progress);
+
+      if (progress >= 1) {
+        simState = STATE.CAMERA_ZOOM_IN;
+        stateTime = 0;
+        zoomStartX = camX;
+        zoomStartY = camY;
+      }
+      return;
+    }
+
+    // 4. Zoom della visuale dentro il riquadro bianco e dentro la particella di luce
+    if (simState === STATE.CAMERA_ZOOM_IN) {
+      const dur = prefersReducedMotion ? 950 : 1650;
+      const progress = clamp(stateTime / dur, 0, 1);
+      const eased = easeInOutCubic(progress);
+
+      const hero = particles[heroIdx];
+      camX = zoomStartX + (hero.x - zoomStartX) * eased;
+      camY = zoomStartY + (hero.y - zoomStartY) * eased;
+      camZoom = 1.22 * Math.pow(18.5, eased); // Zoom fino a ~22.5x
+
+      // Le particelle circostanti restano quasi sospese nel rallentatore
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        p.x += p.vx * dt * 0.04;
+        p.y += p.vy * dt * 0.04;
+      }
+
+      // A metà zoom entriamo nella micro-struttura: iniziano i 3 quark & gluoni
+      micro.opacity = clamp((camZoom - 3.2) / 9.0, 0, 1);
+      if (micro.opacity > 0.05) {
+        updateMicroPhysics(dtMs);
+      }
+
+      if (progress >= 1) {
+        simState = STATE.MICRO_QUARKS;
+        stateTime = 0;
+        micro.opacity = 1;
+      }
+      return;
+    }
+
+    // 5. Interno della particella: 3 Quark che si avvicinano + scambio Gluoni -> Protone -> Elettrone
+    if (simState === STATE.MICRO_QUARKS) {
+      micro.opacity = 1;
+      updateMicroPhysics(dtMs);
+
+      const microTotalDuration = prefersReducedMotion ? 3600 : 6600;
+      if (stateTime >= microTotalDuration) {
+        simState = STATE.CAMERA_ZOOM_OUT;
+        stateTime = 0;
+        // Prepara tutte le particelle macro per la ricomposizione nella scena Idrogeno
+        if (!returnToSettledAfterMicro) {
+          for (let i = 0; i < particles.length; i++) {
+            particles[i].magneticWake = 0;
+          }
+        }
+      }
+      return;
+    }
+
+    // 6. Zoom-out dal protone/atomo appena formato verso la scena Idrogeno + asse del tempo
+    if (simState === STATE.CAMERA_ZOOM_OUT) {
+      const dur = prefersReducedMotion ? 950 : 1550;
+      const progress = clamp(stateTime / dur, 0, 1);
+      const eased = easeInOutCubic(progress);
+
+      camZoom = 22.5 * Math.pow(1 / 22.5, eased);
+      const hero = particles[heroIdx];
+      camX = hero.x + (cx - hero.x) * eased;
+      camY = hero.y + (cy - hero.y) * eased;
+      micro.opacity = clamp(1 - progress * 1.45, 0, 1);
+      updateMicroPhysics(dtMs * 0.5);
+
+      // Risveglio fluido delle particelle macro mentre torniamo alla scala dell'universo
+      const macroStepMs = dtMs * (0.35 + 0.65 * eased);
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        p.magneticWake = clamp(p.magneticWake + macroStepMs / 1100, 0, 1);
+      }
+
+      stepMacroDensityPhysics(dt, dtMs);
+
+      if (progress >= 1) {
+        simState = STATE.SETTLED;
+        stateTime = 0;
+        camZoom = 1;
+        camX = cx;
+        camY = cy;
+        micro.opacity = 0;
+        syncHitboxes();
+      }
+      return;
+    }
+
+    // 7. Riavvolgimento alla singolarità bianca centrale (Nodo 1 sull'asse)
     if (simState === STATE.IMPLODING) {
       const total = particles.length;
       const gatherThreshSq = Math.pow(seedIdleRadius * 2.1, 2);
       let gatheredCount = 0;
-
       const mergeShrink = implodeMerging ? 1 - implodeMergeAlpha * 0.45 : 1;
 
       for (let i = 0; i < total; i++) {
@@ -809,6 +1212,11 @@
         p.vy = (p.vy + dy * pull) * damp;
         p.x += p.vx * dt;
         p.y += p.vy * dt;
+
+        // Sbianca gradualmente durante la fusione nella singolarità iniziale
+        if (Math.random() < 0.08) {
+          p.colorIdx = Math.random() < 0.7 ? 0 : 1;
+        }
 
         const cdx = p.x - cx;
         const cdy = p.y - cy;
@@ -841,11 +1249,19 @@
       return;
     }
 
-    explosionElapsed += dtMs;
-    if (simState === STATE.EXPLODING && stateTime > 1250) {
-      simState = STATE.SETTLED;
+    // 8. Scena SETTLED (Presentazione Idrogeno + Asse del tempo + Moto browniano + Calamita)
+    for (let i = 0; i < particles.length; i++) {
+      if (particles[i].magneticWake < 1) {
+        particles[i].magneticWake = clamp(particles[i].magneticWake + dtMs / 1000, 0, 1);
+      }
     }
+    stepMacroDensityPhysics(dt, dtMs);
+  }
 
+  /**
+   * Fisica atomica di densità uniforme, cariche +/-, moto browniano e calamita del mouse.
+   */
+  function stepMacroDensityPhysics(dt, dtMs) {
     if (pulseWave.active) {
       pulseWave.prevRadius = pulseWave.radius;
       pulseWave.radius += 26 * dt;
@@ -859,7 +1275,6 @@
     const softness = CONFIG.edgeSoftness;
     const electronPos = getElectronPosition();
 
-    // 1. Spatial Hash + conteggi densità per le zone strutturali
     for (let z = 1; z < zoneCount; z++) {
       zones[z].currentCount = 0;
     }
@@ -870,11 +1285,6 @@
 
     for (let i = 0; i < total; i++) {
       const p = particles[i];
-
-      if (p.magneticWake < 1) {
-        const wakeRaw = clamp((explosionElapsed - p.returnDelay) / p.returnDuration, 0, 1);
-        p.magneticWake = easeInOutQuad(wakeRaw);
-      }
 
       if (p.x >= -shCellSize && p.x < viewW + shCellSize && p.y >= -shCellSize && p.y < viewH + shCellSize) {
         const cxCell = clamp(Math.floor(p.x / shCellSize) + 1, 0, shCols - 1);
@@ -908,7 +1318,6 @@
       }
     }
 
-    // 2. Carica atomica positiva/negativa per ogni zona strutturale
     let fallbackBestZone = 1;
     let fallbackMaxDeficit = -Infinity;
     for (let z = 1; z < zoneCount; z++) {
@@ -923,14 +1332,13 @@
     const brownianBase = CONFIG.brownianStrength * (prefersReducedMotion ? 0.12 : 1);
     const magnetRad = CONFIG.magnetRadius;
     const magnetRadSq = magnetRad * magnetRad;
-    const pointerActive = pointer.active;
+    const pointerActive = pointer.active && simState === STATE.SETTLED;
     const isAttracting = pointer.down;
     const magnetForce = CONFIG.magnetForce * (isAttracting ? 1.45 : 1.0);
     const repelDist = idealSpacing;
     const repelDistSq = repelDist * repelDist;
     const repelStrength = 0.26;
 
-    // 3. Integrazione forze
     for (let i = 0; i < total; i++) {
       const p = particles[i];
       const wake = p.magneticWake;
@@ -952,7 +1360,6 @@
       p.vx += (Math.random() - 0.5) * brownian * dt;
       p.vy += (Math.random() - 0.5) * brownian * dt;
 
-      // Repulsione locale isotropa tra particelle strutturali
       if (!p.isElectron && wake > 0.2 && p.x >= -shCellSize && p.x < viewW + shCellSize && p.y >= -shCellSize && p.y < viewH + shCellSize) {
         const cxCell = clamp(Math.floor(p.x / shCellSize) + 1, 0, shCols - 1);
         const cyCell = clamp(Math.floor(p.y / shCellSize) + 1, 0, shRows - 1);
@@ -986,14 +1393,13 @@
 
       if (wake > 0.001) {
         if (p.isElectron) {
-          // Elettrone orbitante: le sue particelle inseguono il pacchetto orbitale lungo l'orbita
           const ex = electronPos.x + p.electronOx - p.x;
           const ey = electronPos.y + p.electronOy - p.y;
           const pull = 0.22 * wake * dt;
           p.vx += ex * pull;
           p.vy += ey * pull;
           if (wake > 0.45 && Math.random() < 0.14) {
-            p.colorIdx = Math.random() < 0.35 ? 4 : 3; // turchese brillante / bianco stella
+            p.colorIdx = Math.random() < 0.35 ? 0 : 5;
           }
         } else {
           const zId = p.currentZone;
@@ -1001,13 +1407,12 @@
           if (zId > 0) {
             const zone = zones[zId];
 
-            // Transizione fluida verso il colore educativo della zona
             if (wake > 0.4 && p.colorIdx !== zone.colorIdx && Math.random() < 0.1) {
-              // Accenti occasionali caldi nel nucleo (oro/magenta) o nel nodo Idrogeno (turchese/magenta)
-              if (zId === 9 && Math.random() < 0.32) {
-                p.colorIdx = 1;
-              } else if (zId === 13 && Math.random() < 0.25) {
-                p.colorIdx = 1;
+              if (zId === 9 && Math.random() < 0.35) {
+                p.colorIdx = 7; // accento caldo nel protone
+              } else if (zId === 13) {
+                // Nodo 1 (Quark/Gluoni): mostra i 3 colori QCD!
+                p.colorIdx = 2 + Math.floor(Math.random() * 3);
               } else {
                 p.colorIdx = zone.colorIdx;
               }
@@ -1089,7 +1494,6 @@
         }
       }
 
-      // Calamita del mouse
       if (pointerActive) {
         const mdx = p.x - pointer.x;
         const mdy = p.y - pointer.y;
@@ -1128,15 +1532,15 @@
   }
 
   /**
-   * Disegna la singolarità primordiale luminosa sul nero assoluto.
+   * Disegna la singolarità iniziale puramente in bianco e sfumature di bianco.
    */
-  function drawSeedSphere(cx, cy, r, alphaScale, growthNorm) {
-    const haloSpread = r * (2.6 + seedHoverCharge * 0.45 + growthNorm * 0.75);
+  function drawWhiteSeedSphere(cx, cy, r, alphaScale, growthNorm) {
+    const haloSpread = r * (2.4 + seedHoverCharge * 0.4 + growthNorm * 0.7);
     const grad = ctx.createRadialGradient(cx, cy, r * 0.15, cx, cy, haloSpread);
-    grad.addColorStop(0.0, 'rgba(255, 252, 245, 1)');
-    grad.addColorStop(0.32, 'rgba(255, 210, 128, 0.96)');
-    grad.addColorStop(0.52, 'rgba(236, 78, 175, 0.42)');
-    grad.addColorStop(0.75, 'rgba(130, 82, 245, 0.14)');
+    grad.addColorStop(0.0, 'rgba(255, 255, 255, 1)');
+    grad.addColorStop(0.36, 'rgba(248, 250, 255, 0.96)');
+    grad.addColorStop(0.58, 'rgba(218, 224, 236, 0.34)');
+    grad.addColorStop(0.82, 'rgba(180, 190, 210, 0.08)');
     grad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
 
     ctx.save();
@@ -1150,8 +1554,194 @@
   }
 
   /**
-   * Disegna su sfondo cosmico nero (#000000) con sprite nebulosa a blending additivo.
+   * Disegna il riquadro bianco attorno alla singola particella isolata,
+   * che poi si espande oltre lo schermo quando la visuale ci entra dentro.
    */
+  function drawWhiteReticle(sx, sy, size, alpha) {
+    if (alpha <= 0.01 || size > Math.max(viewW, viewH) * 2.2) return;
+
+    const half = size * 0.5;
+    const corner = Math.min(half * 0.45, Math.max(8, size * 0.16));
+    const left = sx - half;
+    const right = sx + half;
+    const top = sy - half;
+    const bottom = sy + half;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+
+    // Sottile cornice quadrata bianca
+    ctx.strokeStyle = `rgba(255, 255, 255, ${(alpha * 0.42).toFixed(3)})`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(left, top, size, size);
+
+    // Angoli bianchi nitidi del mirino
+    ctx.strokeStyle = `rgba(255, 255, 255, ${(alpha * 0.95).toFixed(3)})`;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    // Top-left
+    ctx.moveTo(left, top + corner);
+    ctx.lineTo(left, top);
+    ctx.lineTo(left + corner, top);
+    // Top-right
+    ctx.moveTo(right - corner, top);
+    ctx.lineTo(right, top);
+    ctx.lineTo(right, top + corner);
+    // Bottom-right
+    ctx.moveTo(right, bottom - corner);
+    ctx.lineTo(right, bottom);
+    ctx.lineTo(right - corner, bottom);
+    // Bottom-left
+    ctx.moveTo(left + corner, bottom);
+    ctx.lineTo(left, bottom);
+    ctx.lineTo(left, bottom - corner);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  /**
+   * Disegna la micro-scena dentro la particella: 3 Quark (R, G, B), scambio di Gluoni luminosi
+   * e arrivo del primo Elettrone (formazione del primo atomo di Idrogeno).
+   */
+  function renderMicroScene(centerX, centerY, scaleFactor, opacity) {
+    if (opacity <= 0.01) return;
+    const { cx, cy } = layoutBounds;
+    const quarks = micro.quarks;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+
+    // Trasformazione ancorata esattamente alla particella inquadrata durante zoom-in e zoom-out
+    const tx = (x) => centerX + (x - cx) * scaleFactor;
+    const ty = (y) => centerY + (y - cy) * scaleFactor;
+
+    // 1. Filamenti tratteggiati di forza forte tra i 3 quark
+    for (let i = 0; i < 3; i++) {
+      const qA = quarks[i];
+      const qB = quarks[(i + 1) % 3];
+      const x1 = tx(qA.x);
+      const y1 = ty(qA.y);
+      const x2 = tx(qB.x);
+      const y2 = ty(qB.y);
+      const dist = Math.hypot(x2 - x1, y2 - y1);
+      if (dist > 6) {
+        ctx.strokeStyle = `rgba(255, 255, 255, ${(0.11 * opacity).toFixed(3)})`;
+        ctx.lineWidth = Math.max(0.8, 1.2 * scaleFactor);
+        ctx.setLineDash([3 * scaleFactor, 6 * scaleFactor]);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+    }
+    ctx.setLineDash([]);
+
+    // 2. Gluoni: particelline di luce che viaggiano da un quark all'altro
+    for (let i = 0; i < micro.gluons.length; i++) {
+      const g = micro.gluons[i];
+      const qA = quarks[g.fromIdx];
+      const qB = quarks[g.toIdx];
+
+      const x1 = qA.x;
+      const y1 = qA.y;
+      const x2 = qB.x;
+      const y2 = qB.y;
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len;
+      const ny = dx / len;
+      const midX = (x1 + x2) * 0.5 + nx * g.curveOffset;
+      const midY = (y1 + y2) * 0.5 + ny * g.curveOffset;
+
+      // Posizione sulla curva di Bézier quadratica
+      const t = g.t;
+      const omt = 1 - t;
+      const gx = omt * omt * x1 + 2 * omt * t * midX + t * t * x2;
+      const gy = omt * omt * y1 + 2 * omt * t * midY + t * t * y2;
+
+      const sx = tx(gx);
+      const sy = ty(gy);
+      const gRad = (5.5 + Math.sin(t * Math.PI) * 3.5) * scaleFactor;
+
+      ctx.globalAlpha = opacity * 0.95;
+      ctx.drawImage(glowSprites[g.colorIdx], sx - gRad, sy - gRad, gRad * 2, gRad * 2);
+
+      // Scia luminosa del gluone
+      const tPrev = Math.max(0, t - 0.09);
+      const omtP = 1 - tPrev;
+      const px = omtP * omtP * x1 + 2 * omtP * tPrev * midX + tPrev * tPrev * x2;
+      const py = omtP * omtP * y1 + 2 * omtP * tPrev * midY + tPrev * tPrev * y2;
+      ctx.globalAlpha = opacity * 0.45;
+      ctx.drawImage(
+        glowSprites[0],
+        tx(px) - gRad * 0.55,
+        ty(py) - gRad * 0.55,
+        gRad * 1.1,
+        gRad * 1.1
+      );
+    }
+
+    // 3. I 3 Quark formati da sfere/sotto-particelle luminose (Rosso, Verde, Blu)
+    const now = performance.now() * 0.004;
+    for (let i = 0; i < 3; i++) {
+      const q = quarks[i];
+      const qx = tx(q.x);
+      const qy = ty(q.y);
+
+      // Alone morbido del singolo quark
+      const coreGlow = 26 * scaleFactor;
+      ctx.globalAlpha = opacity * 0.42;
+      ctx.drawImage(
+        glowSprites[q.colorIdx],
+        qx - coreGlow,
+        qy - coreGlow,
+        coreGlow * 2,
+        coreGlow * 2
+      );
+
+      // Sotto-particelle vibranti che formano il quark
+      for (let k = 0; k < q.subDots.length; k++) {
+        const sd = q.subDots[k];
+        const jx = Math.cos(now + sd.phase) * 2.2;
+        const jy = Math.sin(now * 1.2 + sd.phase) * 2.2;
+        const sx = tx(q.x + sd.ox + jx);
+        const sy = ty(q.y + sd.oy + jy);
+        const sr = 4.6 * sd.size * scaleFactor;
+
+        ctx.globalAlpha = opacity * 0.88;
+        ctx.drawImage(glowSprites[q.colorIdx], sx - sr, sy - sr, sr * 2, sr * 2);
+      }
+    }
+
+    // 4. Primo Elettrone che entra in orbita attorno al protone appena legato
+    if (micro.electron.active) {
+      const el = micro.electron;
+      for (let i = 0; i < el.trail.length; i++) {
+        const tr = el.trail[i];
+        const trRad = 4.2 * scaleFactor;
+        ctx.globalAlpha = tr.alpha * opacity * 0.55;
+        ctx.drawImage(
+          glowSprites[5],
+          tx(tr.x) - trRad,
+          ty(tr.y) - trRad,
+          trRad * 2,
+          trRad * 2
+        );
+      }
+
+      const ex = tx(el.x);
+      const ey = ty(el.y);
+      const eRad = 15 * scaleFactor;
+      ctx.globalAlpha = opacity;
+      ctx.drawImage(glowSprites[5], ex - eRad, ey - eRad, eRad * 2, eRad * 2);
+      ctx.drawImage(glowSprites[0], ex - eRad * 0.55, ey - eRad * 0.55, eRad * 1.1, eRad * 1.1);
+    }
+
+    ctx.restore();
+  }
+
   function renderFrame() {
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
@@ -1163,53 +1753,103 @@
     if (simState === STATE.IDLE_SEED || simState === STATE.GROWING) {
       const r = Math.max(1, seedCurrentRadius);
       const growthNorm = clamp((r - seedIdleRadius) / Math.max(1, seedMaxRadius - seedIdleRadius), 0, 1);
-      drawSeedSphere(cx, cy, r, 1, growthNorm);
+      drawWhiteSeedSphere(cx, cy, r, 1, growthNorm);
       return;
     }
 
-    ctx.globalCompositeOperation = 'lighter';
-
+    // Disegna le particelle macroscopiche (con eventuale trasformazione di camera)
     const dotBase = CONFIG.dotSize;
-    const cullPad = dotBase * 5;
     const total = particles.length;
     const hoverGroup = pointer.hoverGroup;
     const particleMergeFade =
       simState === STATE.IMPLODING && implodeMerging ? Math.max(0, 1 - implodeMergeAlpha * 0.9) : 1;
 
-    for (let i = 0; i < total; i++) {
-      const p = particles[i];
-      if (p.x < -cullPad || p.x > viewW + cullPad || p.y < -cullPad || p.y > viewH + cullPad) {
-        continue;
+    // Dissolvenza dell'alone bianco esterno dell'eroe mentre entriamo nella micro-scena
+    const macroFadeDuringMicro =
+      simState === STATE.MICRO_QUARKS
+        ? 0
+        : simState === STATE.CAMERA_ZOOM_IN || simState === STATE.CAMERA_ZOOM_OUT
+          ? clamp(1 - (camZoom - 2.5) / 7.5, 0, 1)
+          : 1;
+
+    if (macroFadeDuringMicro > 0.01) {
+      ctx.globalCompositeOperation = 'lighter';
+      const zoomScale = camZoom;
+      const cullPad = dotBase * 5 * Math.min(zoomScale, 6);
+
+      for (let i = 0; i < total; i++) {
+        const p = particles[i];
+        const sx = cx + (p.x - camX) * zoomScale;
+        const sy = cy + (p.y - camY) * zoomScale;
+
+        if (sx < -cullPad || sx > viewW + cullPad || sy < -cullPad || sy > viewH + cullPad) {
+          continue;
+        }
+
+        const zId = p.currentZone;
+        const isHoveredNode =
+          simState === STATE.SETTLED &&
+          hoverGroup !== 0 &&
+          zId > 0 &&
+          zones[zId] &&
+          zones[zId].groupId === hoverGroup;
+
+        let alpha = p.alphaBase * particleMergeFade * macroFadeDuringMicro;
+        if (simState === STATE.SETTLED && zId === 0 && !p.isElectron) {
+          alpha *= 0.72;
+        }
+        if (isHoveredNode) {
+          alpha = Math.min(1, alpha + 0.22);
+        }
+
+        const radius =
+          dotBase *
+          p.sizeFactor *
+          (p.isElectron && simState === STATE.SETTLED ? 1.25 : isHoveredNode ? 1.18 : 1.0);
+        const spriteRadius = radius * 3.4 * Math.min(zoomScale, 5.5);
+
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(
+          glowSprites[p.colorIdx],
+          sx - spriteRadius,
+          sy - spriteRadius,
+          spriteRadius * 2,
+          spriteRadius * 2
+        );
       }
-
-      const zId = p.currentZone;
-      const isHoveredNode =
-        hoverGroup !== 0 && zId > 0 && zones[zId] && zones[zId].groupId === hoverGroup;
-
-      let alpha = p.alphaBase * particleMergeFade;
-      if (zId === 0 && !p.isElectron && simState !== STATE.IMPLODING) {
-        alpha *= 0.72;
-      }
-      if (isHoveredNode) {
-        alpha = Math.min(1, alpha + 0.22);
-      }
-
-      // Scala sprite affinché il nucleo corrisponda a dotSize e l'alone formi il glow della nebulosa
-      const radius = dotBase * p.sizeFactor * (p.isElectron ? 1.25 : isHoveredNode ? 1.18 : 1.0);
-      const spriteRadius = radius * 3.4;
-
-      ctx.globalAlpha = alpha;
-      ctx.drawImage(
-        glowSprites[p.colorIdx],
-        p.x - spriteRadius,
-        p.y - spriteRadius,
-        spriteRadius * 2,
-        spriteRadius * 2
-      );
     }
 
+    // Disegna il riquadro bianco attorno alla particella isolata (e lo espande nello zoom-in)
+    if (simState === STATE.SLOW_MO_RETICLE || simState === STATE.CAMERA_ZOOM_IN) {
+      const hero = particles[heroIdx];
+      const hsx = cx + (hero.x - camX) * camZoom;
+      const hsy = cy + (hero.y - camY) * camZoom;
+      const boxSize =
+        simState === STATE.SLOW_MO_RETICLE ? reticleSize : (48 / 1.22) * camZoom;
+      const boxAlpha =
+        simState === STATE.SLOW_MO_RETICLE
+          ? reticleAlpha
+          : clamp(1 - (camZoom - 8) / 8, 0, 1);
+      drawWhiteReticle(hsx, hsy, boxSize, boxAlpha);
+    }
+
+    // Disegna la micro-struttura (3 Quark + Gluoni + Elettrone) ancorata alla particella bersaglio
+    if (micro.opacity > 0.01) {
+      const hero = particles[heroIdx];
+      const microCenterX =
+        simState === STATE.MICRO_QUARKS ? cx : cx + (hero.x - camX) * camZoom;
+      const microCenterY =
+        simState === STATE.MICRO_QUARKS ? cy : cy + (hero.y - camY) * camZoom;
+      const microScale =
+        simState === STATE.MICRO_QUARKS
+          ? 1
+          : clamp(camZoom / 22.5, 0.06, 1);
+      renderMicroScene(microCenterX, microCenterY, microScale, micro.opacity);
+    }
+
+    // Fusione nella singolarità bianca centrale
     if (simState === STATE.IMPLODING && implodeMerging && implodeMergeAlpha > 0) {
-      drawSeedSphere(cx, cy, seedIdleRadius, implodeMergeAlpha, 0);
+      drawWhiteSeedSphere(cx, cy, seedIdleRadius, implodeMergeAlpha, 0);
     }
 
     ctx.globalAlpha = 1;
@@ -1271,7 +1911,6 @@
     observer.observe(stageWrap);
   }
 
-  // Eventi puntatore sulla scena
   window.addEventListener('pointermove', (e) => {
     const dx = pointer.active ? e.clientX - pointer.x : 0;
     const dy = pointer.active ? e.clientY - pointer.y : 0;
@@ -1309,10 +1948,14 @@
       updatePointerHover(e.clientX, e.clientY);
       if (simState === STATE.IDLE_SEED && pointer.hoverGroup === 99) {
         startBigBangSequence();
-      } else if (pointer.hoverGroup === 2) {
-        implodeToSeed();
-      } else if (pointer.hoverGroup === 3) {
-        triggerHydrogenPulse();
+      } else if (simState === STATE.SETTLED) {
+        if (pointer.hoverGroup === 2) {
+          implodeToSeed();
+        } else if (pointer.hoverGroup === 3) {
+          enterMicroQuarksView(true);
+        } else if (pointer.hoverGroup === 4) {
+          triggerHydrogenPulse();
+        }
       }
     }
 
@@ -1339,6 +1982,9 @@
   });
   btnNodeSingularity.addEventListener('click', (e) => {
     if (e.detail === 0) implodeToSeed();
+  });
+  btnNodeQuarks.addEventListener('click', (e) => {
+    if (e.detail === 0) enterMicroQuarksView(true);
   });
   btnNodeHydrogen.addEventListener('click', (e) => {
     if (e.detail === 0) triggerHydrogenPulse();
@@ -1430,16 +2076,16 @@
   });
 
   ctrlReplay.addEventListener('click', () => {
-    if (simState === STATE.IDLE_SEED) {
-      startBigBangSequence();
-    } else {
-      simState = STATE.IDLE_SEED;
-      stateTime = 0;
-      seedCurrentRadius = layoutBounds.seedIdleRadius;
-      seedHoverCharge = 0;
-      syncHitboxes();
-      startBigBangSequence();
-    }
+    simState = STATE.IDLE_SEED;
+    stateTime = 0;
+    seedCurrentRadius = layoutBounds.seedIdleRadius;
+    seedHoverCharge = 0;
+    camZoom = 1;
+    camX = layoutBounds.cx;
+    camY = layoutBounds.cy;
+    micro.opacity = 0;
+    syncHitboxes();
+    startBigBangSequence();
   });
 
   ctrlReset.addEventListener('click', () => {
