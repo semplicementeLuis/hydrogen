@@ -14,14 +14,17 @@
 
   const CONFIG = { ...DEFAULT_CONFIG };
 
-  // Palette: bianchi puri per Big Bang + colori QCD (R,G,B) + Elettrone turchese
+  // Palette: bianchi Big Bang + colori QCD (R,G,B) + atomi primordiali & nebulose
   const PALETTE = [
-    [255, 255, 255],  // 0: Bianco puro (Singolarità, Big Bang, Gluoni)
-    [208, 216, 230],  // 1: Bianco argento sfumato (profondità Big Bang)
+    [255, 255, 255],  // 0: Bianco puro (Singolarità, Big Bang, Gluoni, nuclei caldi)
+    [208, 218, 236],  // 1: Bianco-argento sfumato (Big Bang / Idrogeno freddo)
     [255, 78, 108],   // 2: Quark Rosso (QCD)
     [56, 238, 156],   // 3: Quark Verde (QCD)
-    [76, 166, 255],   // 4: Quark Blu (QCD)
-    [68, 232, 246],   // 5: Elettrone turchese
+    [76, 166, 255],   // 4: Quark Blu / Idrogeno cosmico blu
+    [68, 232, 246],   // 5: Elettrone / Idrogeno ciano
+    [148, 96, 255],   // 6: Viola cosmico (filamenti rete cosmica)
+    [255, 196, 98],   // 7: Elio-4 primordiale / oro caldo
+    [238, 86, 178],   // 8: Idrogeno-alfa ionizzato (nodi nebulosa caldi)
   ];
 
   // Riferimenti DOM
@@ -31,6 +34,7 @@
 
   const btnSeed = document.getElementById('btn-seed');
   const btnMicroContinue = document.getElementById('btn-micro-continue');
+  const btnCosmicNext = document.getElementById('btn-cosmic-next');
 
   const tuningPanel = document.getElementById('tuning-panel');
   const tuningClose = document.getElementById('tuning-close');
@@ -53,7 +57,7 @@
     prefersReducedMotion = e.matches;
   });
 
-  // Macchina a stati cronologica (Step 1: Big Bang -> Riquadro -> Quark/Gluoni -> Primo Atomo)
+  // Macchina a stati cronologica
   const STATE = {
     IDLE_SEED: 'IDLE_SEED',
     GROWING: 'GROWING',
@@ -62,6 +66,7 @@
     CAMERA_ZOOM_IN: 'CAMERA_ZOOM_IN',
     MICRO_QUARKS: 'MICRO_QUARKS',
     CAMERA_ZOOM_OUT: 'CAMERA_ZOOM_OUT',
+    COSMIC_WEB: 'COSMIC_WEB',
     IMPLODING: 'IMPLODING',
   };
 
@@ -83,10 +88,10 @@
     seedMaxRadius: 115,
   };
 
-  // Pool finito di particelle macroscopiche del Big Bang
+  // Pool finito di particelle / atomi
   let particles = [];
 
-  // Camera & Riquadro bianco sulla particella isolata
+  // Camera & Riquadro bianco
   let camX = 0;
   let camY = 0;
   let camZoom = 1;
@@ -103,6 +108,18 @@
     orbitKickApplied: false,
     electron: { active: false, x: 0, y: 0, angle: 0, radius: 0, targetRadius: 0, trail: [] },
     opacity: 0,
+  };
+
+  // Capitolo 2: Rete Cosmica (nodi di materia oscura, filamenti e griglia di autogravità PM)
+  const PM_COLS = 48;
+  const PM_ROWS = 28;
+  const pmDensity = new Float32Array(PM_COLS * PM_ROWS);
+  const pmSmooth = new Float32Array(PM_COLS * PM_ROWS);
+
+  const cosmic = {
+    elapsed: 0,
+    nodes: [],
+    filaments: [],
   };
 
   // Sprite glow pre-renderizzati per prestazioni a 60fps
@@ -130,6 +147,8 @@
   const pointer = {
     x: -9999,
     y: -9999,
+    vx: 0,
+    vy: 0,
     active: false,
     down: false,
     downTime: 0,
@@ -199,18 +218,25 @@
   }
 
   function createParticle(startX, startY) {
+    // Composizione cosmologica primordiale: ~75% Idrogeno (1), ~25% Elio-4 (2)
+    const isHelium = Math.random() < 0.25;
     return {
       x: startX,
       y: startY,
       vx: 0,
       vy: 0,
+      species: isHelium ? 'He' : 'H',
+      mass: isHelium ? 1.38 : 1.0,
+      baseColorIdx: isHelium ? 7 : Math.random() < 0.45 ? 4 : Math.random() < 0.65 ? 5 : 6,
       colorIdx: Math.random() < 0.68 ? 0 : 1,
-      sizeFactor: 0.72 + Math.random() * 0.58,
+      sizeFactor: isHelium ? 0.85 + Math.random() * 0.55 : 0.65 + Math.random() * 0.52,
       alphaBase: 0.45 + Math.random() * 0.52,
       burstDrag: 0.946 + Math.random() * 0.022,
       coreOx: 0,
       coreOy: 0,
       gatherPull: 0.08,
+      cosmicX: 0,
+      cosmicY: 0,
     };
   }
 
@@ -228,7 +254,14 @@
 
     if (particles.length < targetCount) {
       while (particles.length < targetCount) {
-        particles.push(createParticle(cx, cy));
+        const p = createParticle(
+          simState === STATE.COSMIC_WEB ? Math.random() * viewW : cx,
+          simState === STATE.COSMIC_WEB ? Math.random() * viewH : cy
+        );
+        if (simState === STATE.COSMIC_WEB) {
+          p.colorIdx = p.baseColorIdx;
+        }
+        particles.push(p);
       }
     } else if (particles.length > targetCount) {
       particles.length = targetCount;
@@ -249,8 +282,14 @@
     btnMicroContinue.style.width = `${viewW}px`;
     btnMicroContinue.style.height = `${viewH}px`;
 
+    btnCosmicNext.style.left = '0px';
+    btnCosmicNext.style.top = '0px';
+    btnCosmicNext.style.width = `${viewW}px`;
+    btnCosmicNext.style.height = `${viewH}px`;
+
     btnSeed.hidden = simState !== STATE.IDLE_SEED;
     btnMicroContinue.hidden = simState !== STATE.MICRO_QUARKS;
+    btnCosmicNext.hidden = simState !== STATE.COSMIC_WEB;
   }
 
   function startBigBangSequence() {
@@ -264,9 +303,6 @@
     syncHitboxes();
   }
 
-  /**
-   * Big Bang puramente in sfumature di bianco.
-   */
   function triggerWhiteBigBang() {
     simState = STATE.BIG_BANG;
     stateTime = 0;
@@ -303,9 +339,6 @@
     syncHitboxes();
   }
 
-  /**
-   * Seleziona una singola particella isolata vicina al centro dello schermo.
-   */
   function pickCenterIsolatedParticle() {
     const { cx, cy } = layoutBounds;
     const maxCenterR = Math.min(viewW, viewH) * 0.22;
@@ -344,11 +377,6 @@
     return hero;
   }
 
-  /**
-   * Inizializza la micro-scena interna alla particella:
-   * 3 Quark separati che si condensano prima da energia bianca, poi si avvicinano lentamente
-   * scambiandosi gluoni visibili e catturando infine il primo elettrone.
-   */
   function initMicroScene() {
     const { cx, cy } = layoutBounds;
     const minDim = Math.min(viewW, viewH);
@@ -409,6 +437,78 @@
     };
   }
 
+  /**
+   * Prepara il Capitolo 2 (Rete Cosmica):
+   * - Popola tutto lo spazio con un'immensità di atomi primordiali (~75% H, ~25% He)
+   * - Genera nodi di ammassi gravitazionali collegati da filamenti cosmici
+   */
+  function initCosmicWebScene() {
+    cosmic.elapsed = 0;
+
+    // 8 pozzi gravitazionali (aloni di materia oscura primordiale) distribuiti organicamente
+    const anchors = [
+      { rx: 0.22, ry: 0.28, mass: 1.15 },
+      { rx: 0.48, ry: 0.22, mass: 0.95 },
+      { rx: 0.76, ry: 0.27, mass: 1.25 },
+      { rx: 0.16, ry: 0.64, mass: 0.9 },
+      { rx: 0.43, ry: 0.53, mass: 1.45 }, // grande ammasso principale vicino al centro
+      { rx: 0.68, ry: 0.58, mass: 1.1 },
+      { rx: 0.31, ry: 0.81, mass: 0.85 },
+      { rx: 0.82, ry: 0.78, mass: 1.0 },
+    ];
+
+    cosmic.nodes = anchors.map((a, idx) => ({
+      id: idx,
+      x: (a.rx + (Math.random() - 0.5) * 0.06) * viewW,
+      y: (a.ry + (Math.random() - 0.5) * 0.06) * viewH,
+      mass: a.mass,
+      spin: idx % 2 === 0 ? 1 : -1,
+    }));
+
+    // Filamenti cosmici che collegano i nodi vicini formando la rete
+    const pairs = [
+      [0, 1], [1, 2], [0, 3], [0, 4], [1, 4], [2, 5],
+      [3, 4], [4, 5], [3, 6], [4, 6], [5, 7], [6, 7], [1, 5],
+    ];
+    cosmic.filaments = pairs.map(([aIdx, bIdx]) => {
+      const a = cosmic.nodes[aIdx];
+      const b = cosmic.nodes[bIdx];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      return {
+        ax: a.x,
+        ay: a.y,
+        bx: b.x,
+        by: b.y,
+        lenSq: Math.max(1, dx * dx + dy * dy),
+      };
+    });
+
+    // Distribuisce gli atomi su tutta la distesa cosmica (leggermente oltre i bordi)
+    // mantenendo il nostro atomo protagonista al centro
+    const padX = viewW * 0.08;
+    const padY = viewH * 0.08;
+    const hero = particles[heroIdx];
+
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      if (i === heroIdx) {
+        p.x = hero.x;
+        p.y = hero.y;
+      } else {
+        p.x = -padX + Math.random() * (viewW + padX * 2);
+        p.y = -padY + Math.random() * (viewH + padY * 2);
+      }
+      // Lievi moti termici primordiali
+      const angle = Math.random() * Math.PI * 2;
+      const v = 0.08 + Math.random() * 0.28;
+      p.vx = Math.cos(angle) * v;
+      p.vy = Math.sin(angle) * v;
+      p.colorIdx = p.baseColorIdx;
+      p.alphaBase = 0.48 + Math.random() * 0.48;
+    }
+  }
+
   function enterSlowMoReticle() {
     pickCenterIsolatedParticle();
     simState = STATE.SLOW_MO_RETICLE;
@@ -422,10 +522,11 @@
     syncHitboxes();
   }
 
-  function exitMicroView() {
+  function transitionToCosmicWeb() {
     if (simState !== STATE.MICRO_QUARKS) return;
     simState = STATE.CAMERA_ZOOM_OUT;
     stateTime = 0;
+    initCosmicWebScene();
     syncHitboxes();
   }
 
@@ -460,15 +561,15 @@
     }
 
     pointer.hoverSeed = false;
-    canvas.style.cursor = pointer.down ? 'grabbing' : simState === STATE.MICRO_QUARKS ? 'pointer' : 'default';
+    if (pointer.down) {
+      canvas.style.cursor = 'grabbing';
+    } else if (simState === STATE.MICRO_QUARKS) {
+      canvas.style.cursor = 'pointer';
+    } else {
+      canvas.style.cursor = 'default';
+    }
   }
 
-  /**
-   * Fisica micro rallentata e leggibile:
-   * 1) Formazione dei 3 quark separati da energia bianca (0 - 1.8s)
-   * 2) Avvicinamento molto lento e graduale con scambio lento e chiaro di gluoni luminosi
-   * 3) Arrivo del primo elettrone in orbita -> la visuale resta qui finché l'utente non preme
-   */
   function updateMicroPhysics(dtMs) {
     const dt = Math.min(dtMs / 16.6667, 2.2);
     micro.time += dtMs;
@@ -478,7 +579,6 @@
     const quarks = micro.quarks;
     const formDuration = prefersReducedMotion ? 1000 : 1800;
 
-    // Fase 1: i 3 quark si formano separati nei loro vertici
     if (micro.time < formDuration) {
       for (let i = 0; i < 3; i++) {
         const q = quarks[i];
@@ -488,7 +588,6 @@
       return;
     }
 
-    // Avvio della fase 2: lieve moto orbitale per un avvicinamento lento e naturale
     if (!micro.orbitKickApplied) {
       micro.orbitKickApplied = true;
       for (let i = 0; i < 3; i++) {
@@ -499,7 +598,6 @@
       }
     }
 
-    // Fase 2: avvicinamento molto lento e scambio di gluoni leggibile
     const bindElapsed = micro.time - formDuration;
     const bindRamp = easeInOutQuad(clamp(bindElapsed / 4200, 0, 1));
     const eqDist = clamp(minDim * 0.068, 28, 52);
@@ -533,7 +631,6 @@
         }
       }
 
-      // Lenta danza orbitale + lieve tremolio + perturbazione col cursore
       q.vx += (-dyC * 0.00085 + (Math.random() - 0.5) * 0.18) * dt;
       q.vy += (dxC * 0.00085 + (Math.random() - 0.5) * 0.18) * dt;
 
@@ -554,7 +651,6 @@
       q.y += q.vy * dt;
     }
 
-    // Gluoni lenti e ben visibili lungo il tragitto da un quark all'altro
     const avgSep =
       (Math.hypot(quarks[0].x - quarks[1].x, quarks[0].y - quarks[1].y) +
         Math.hypot(quarks[1].x - quarks[2].x, quarks[1].y - quarks[2].y) +
@@ -571,7 +667,7 @@
         fromIdx,
         toIdx,
         t: 0,
-        speed: 0.0085 + Math.random() * 0.005, // ~3x più lento per seguire ogni singolo gluone
+        speed: 0.0085 + Math.random() * 0.005,
         curveOffset: (Math.random() - 0.5) * clamp(avgSep * 0.55, 22, 65),
         colorIdx: Math.random() < 0.45 ? 0 : quarks[fromIdx].colorIdx,
       });
@@ -592,7 +688,6 @@
       }
     }
 
-    // Fase 3: una volta avvicinati i 3 quark, arriva il primo elettrone in orbita lenta
     const electronTrigger = formDuration + (prefersReducedMotion ? 2600 : 5400);
     if (micro.time > electronTrigger) {
       const el = micro.electron;
@@ -608,6 +703,197 @@
         el.trail[i].alpha *= Math.pow(0.95, dt);
       }
     }
+  }
+
+  /**
+   * Fisica scientifica del Capitolo 2 (Instabilità di Jeans & Rete Cosmica):
+   * - Griglia Particle-Mesh (48x28) per autogravità reale locale
+   * - Flusso lungo i filamenti cosmici verso i nodi / ammassi rotanti
+   * - Segregazione di massa (Elio ~25% leggermente più pesante cade prima nei nuclei)
+   * - Riscaldamento cromatico e pressione termica nei nuclei densi delle nebulose
+   */
+  function updateCosmicWebPhysics(dtMs) {
+    const dt = Math.min(dtMs / 16.6667, 2.2);
+    cosmic.elapsed += dtMs;
+
+    // La gravità cresce gradualmente dal gas uniforme verso il collasso filamentare
+    const gravityRamp = easeInOutQuad(clamp((cosmic.elapsed - 600) / 5500, 0, 1));
+    const total = particles.length;
+    const cellW = viewW / PM_COLS;
+    const cellH = viewH / PM_ROWS;
+
+    // 1. Deposita la massa degli atomi nella griglia Particle-Mesh
+    pmDensity.fill(0);
+    for (let i = 0; i < total; i++) {
+      const p = particles[i];
+      const gx = Math.floor(p.x / cellW);
+      const gy = Math.floor(p.y / cellH);
+      if (gx >= 0 && gx < PM_COLS && gy >= 0 && gy < PM_ROWS) {
+        pmDensity[gy * PM_COLS + gx] += p.mass;
+      }
+    }
+
+    // 2. Smooth 3x3 della griglia per ottenere un potenziale gravitazionale continuo
+    for (let gy = 0; gy < PM_ROWS; gy++) {
+      const row = gy * PM_COLS;
+      for (let gx = 0; gx < PM_COLS; gx++) {
+        let sum = 0;
+        let wSum = 0;
+        for (let oy = -1; oy <= 1; oy++) {
+          const ny = gy + oy;
+          if (ny < 0 || ny >= PM_ROWS) continue;
+          const nRow = ny * PM_COLS;
+          for (let ox = -1; ox <= 1; ox++) {
+            const nx = gx + ox;
+            if (nx < 0 || nx >= PM_COLS) continue;
+            const w = ox === 0 && oy === 0 ? 4 : ox === 0 || oy === 0 ? 2 : 1;
+            sum += pmDensity[nRow + nx] * w;
+            wSum += w;
+          }
+        }
+        pmSmooth[row + gx] = sum / wSum;
+      }
+    }
+
+    const nodes = cosmic.nodes;
+    const filaments = cosmic.filaments;
+    const nodeCount = nodes.length;
+    const filCount = filaments.length;
+
+    const magnetRad = CONFIG.magnetRadius;
+    const magnetRadSq = magnetRad * magnetRad;
+    const pointerActive = pointer.active && simState === STATE.COSMIC_WEB;
+    const isAttracting = pointer.down;
+    const magnetForce = CONFIG.magnetForce;
+
+    // 3. Integra gravità dei filamenti, pozzi dei nodi, gradiente PM, rotazione e pressione termica
+    for (let i = 0; i < total; i++) {
+      const p = particles[i];
+      const mass = p.mass;
+
+      // Agitazione termica (più bassa man mano che l'universo si raffredda e collassa)
+      const thermal = (0.14 - 0.06 * gravityRamp) * (prefersReducedMotion ? 0.25 : 1);
+      p.vx += (Math.random() - 0.5) * thermal * dt;
+      p.vy += (Math.random() - 0.5) * thermal * dt;
+
+      if (gravityRamp > 0.001) {
+        // a) Attrazione verso il filamento cosmico più vicino
+        let bestFilDistSq = Infinity;
+        let bestFilDx = 0;
+        let bestFilDy = 0;
+
+        for (let f = 0; f < filCount; f++) {
+          const fil = filaments[f];
+          const abx = fil.bx - fil.ax;
+          const aby = fil.by - fil.ay;
+          const t = clamp(((p.x - fil.ax) * abx + (p.y - fil.ay) * aby) / fil.lenSq, 0, 1);
+          const projX = fil.ax + abx * t;
+          const projY = fil.ay + aby * t;
+          const dx = projX - p.x;
+          const dy = projY - p.y;
+          const dSq = dx * dx + dy * dy;
+          if (dSq < bestFilDistSq) {
+            bestFilDistSq = dSq;
+            bestFilDx = dx;
+            bestFilDy = dy;
+          }
+        }
+
+        const filDist = Math.sqrt(bestFilDistSq) || 1;
+        if (filDist > 12 && filDist < 260) {
+          const filPull = (1 - filDist / 260) * 0.045 * gravityRamp * mass * dt;
+          p.vx += (bestFilDx / filDist) * filPull;
+          p.vy += (bestFilDy / filDist) * filPull;
+        }
+
+        // b) Attrazione gravitazionale verso i nodi / ammassi + conservazione momento angolare
+        let nearestNodeDist = Infinity;
+        for (let n = 0; n < nodeCount; n++) {
+          const node = nodes[n];
+          const dx = node.x - p.x;
+          const dy = node.y - p.y;
+          const distSq = dx * dx + dy * dy;
+          const dist = Math.sqrt(distSq);
+          if (dist < nearestNodeDist) nearestNodeDist = dist;
+
+          // Gravità ammorbidita 1 / (r^2 + eps^2)
+          const softSq = distSq + 2400;
+          const gPull = (node.mass * 240 * gravityRamp * mass * dt) / softSq;
+          p.vx += (dx / Math.max(12, dist)) * gPull;
+          p.vy += (dy / Math.max(12, dist)) * gPull;
+
+          // Rotazione e pressione termica nel nucleo della nebulosa (impedisce collasso puntiforme)
+          if (dist < 130) {
+            const coreNorm = 1 - dist / 130;
+            const tang = (0.042 * coreNorm * node.mass * gravityRamp * dt) * node.spin;
+            const nx = dx / Math.max(8, dist);
+            const ny = dy / Math.max(8, dist);
+            p.vx += -ny * tang;
+            p.vy += nx * tang;
+
+            if (dist < 26) {
+              const pressure = (1 - dist / 26) * 0.19 * gravityRamp * dt;
+              p.vx -= nx * pressure;
+              p.vy -= ny * pressure;
+            }
+          }
+        }
+
+        // c) Autogravità reale dalla griglia Particle-Mesh (gradiente di densità locale)
+        const gx = clamp(Math.floor(p.x / cellW), 1, PM_COLS - 2);
+        const gy = clamp(Math.floor(p.y / cellH), 1, PM_ROWS - 2);
+        const cIdx = gy * PM_COLS + gx;
+        const gradX = pmSmooth[cIdx + 1] - pmSmooth[cIdx - 1];
+        const gradY = pmSmooth[cIdx + PM_COLS] - pmSmooth[cIdx - PM_COLS];
+        const pmPull = 0.0085 * gravityRamp * mass * dt;
+        p.vx += gradX * pmPull;
+        p.vy += gradY * pmPull;
+
+        // d) Riscaldamento cromatico dei nuclei densi delle nebulose (H-alfa magenta / oro / bianco)
+        const localDens = pmSmooth[cIdx];
+        if (localDens > 16 || nearestNodeDist < 28) {
+          if (p.species === 'H' && Math.random() < 0.08) {
+            p.colorIdx = nearestNodeDist < 16 || localDens > 34 ? 0 : 8;
+          } else if (p.species === 'He' && Math.random() < 0.08) {
+            p.colorIdx = nearestNodeDist < 14 ? 0 : 7;
+          }
+        } else if (p.colorIdx !== p.baseColorIdx && Math.random() < 0.04) {
+          p.colorIdx = p.baseColorIdx;
+        }
+      }
+
+      // Calamita del mouse
+      if (pointerActive) {
+        const mdx = p.x - pointer.x;
+        const mdy = p.y - pointer.y;
+        const distSq = mdx * mdx + mdy * mdy;
+        if (distSq < magnetRadSq && distSq > 0.001) {
+          const dist = Math.sqrt(distSq);
+          const falloff = 1 - dist / magnetRad;
+          const smooth = falloff * falloff;
+          const nx = mdx / dist;
+          const ny = mdy / dist;
+          if (isAttracting) {
+            const pull = smooth * magnetForce * 1.15 * dt;
+            p.vx -= nx * pull + ny * pull * 0.25;
+            p.vy -= ny * pull - nx * pull * 0.25;
+          } else {
+            const push = smooth * magnetForce * 0.9 * dt;
+            p.vx += nx * push + pointer.vx * smooth * 0.04;
+            p.vy += ny * push + pointer.vy * smooth * 0.04;
+          }
+        }
+      }
+
+      const damp = Math.pow(0.955, dt);
+      p.vx *= damp;
+      p.vy *= damp;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+    }
+
+    pointer.vx *= 0.78;
+    pointer.vy *= 0.78;
   }
 
   function updateSimulation(dtMs) {
@@ -711,16 +997,15 @@
       return;
     }
 
-    // Resta fermo in MICRO_QUARKS finché l'utente non preme lo schermo
     if (simState === STATE.MICRO_QUARKS) {
       micro.opacity = 1;
       updateMicroPhysics(dtMs);
       return;
     }
 
-    // Zoom-out al click dell'utente e ritorno alla singolarità bianca per i prossimi step
+    // Zoom-out dal primo atomo di Idrogeno verso l'immensità degli atomi nello spazio (Capitolo 2)
     if (simState === STATE.CAMERA_ZOOM_OUT) {
-      const dur = prefersReducedMotion ? 750 : 1200;
+      const dur = prefersReducedMotion ? 950 : 1650;
       const progress = clamp(stateTime / dur, 0, 1);
       const eased = easeInOutCubic(progress);
 
@@ -728,16 +1013,25 @@
       camZoom = 22.5 * Math.pow(1 / 22.5, eased);
       camX = hero.x + (cx - hero.x) * eased;
       camY = hero.y + (cy - hero.y) * eased;
-      micro.opacity = clamp(1 - progress * 1.5, 0, 1);
+      micro.opacity = clamp(1 - progress * 1.55, 0, 1);
       updateMicroPhysics(dtMs * 0.4);
+      updateCosmicWebPhysics(dtMs * 0.45);
 
       if (progress >= 1) {
+        simState = STATE.COSMIC_WEB;
+        stateTime = 0;
         camZoom = 1;
         camX = cx;
         camY = cy;
         micro.opacity = 0;
-        beginImplosionToSeed();
+        syncHitboxes();
       }
+      return;
+    }
+
+    // Capitolo 2 attivo: aggregazione gravitazionale in filamenti, ammassi e nebulose
+    if (simState === STATE.COSMIC_WEB) {
+      updateCosmicWebPhysics(dtMs);
       return;
     }
 
@@ -761,6 +1055,10 @@
         p.x += p.vx * dt;
         p.y += p.vy * dt;
 
+        if (Math.random() < 0.08) {
+          p.colorIdx = Math.random() < 0.7 ? 0 : 1;
+        }
+
         const cdx = p.x - cx;
         const cdy = p.y - cy;
         if (cdx * cdx + cdy * cdy <= gatherThreshSq) {
@@ -769,7 +1067,7 @@
       }
 
       if (!implodeMerging) {
-        if (gatheredCount >= total * 0.97 || stateTime > 1550) {
+        if (gatheredCount >= total * 0.97 || stateTime > 1650) {
           implodeMerging = true;
           implodeMergeTime = 0;
         }
@@ -864,7 +1162,6 @@
     const condenseEase = easeOutCubic(formProgress);
     const colorMix = easeInOutQuad(clamp((formProgress - 0.2) / 0.8, 0, 1));
 
-    // 1. Filamenti di forza forte visibili dall'inizio dello scambio di gluoni
     if (micro.time >= formDuration) {
       const filamentAlpha = clamp((micro.time - formDuration) / 800, 0, 1) * 0.14 * opacity;
       for (let i = 0; i < 3; i++) {
@@ -888,7 +1185,6 @@
       ctx.setLineDash([]);
     }
 
-    // 2. Gluoni: pacchetti di luce con scia che viaggiano lentamente da un quark all'altro
     for (let i = 0; i < micro.gluons.length; i++) {
       const g = micro.gluons[i];
       const qA = quarks[g.fromIdx];
@@ -918,7 +1214,6 @@
       ctx.globalAlpha = opacity * 0.96;
       ctx.drawImage(glowSprites[g.colorIdx], sx - gRad, sy - gRad, gRad * 2, gRad * 2);
 
-      // Scia multipla del gluone per evidenziarne la direzione lenta
       for (let s = 1; s <= 3; s++) {
         const tPrev = Math.max(0, t - s * 0.045);
         const omtP = 1 - tPrev;
@@ -936,7 +1231,6 @@
       }
     }
 
-    // 3. I 3 Quark: si condensano da energia bianca diffusa e si illuminano in R, G, B
     const now = performance.now() * 0.004;
     for (let i = 0; i < 3; i++) {
       const q = quarks[i];
@@ -980,7 +1274,6 @@
       }
     }
 
-    // 4. Primo Elettrone catturato in orbita attorno al protone
     if (micro.electron.active) {
       const el = micro.electron;
       for (let i = 0; i < el.trail.length; i++) {
@@ -1030,9 +1323,11 @@
     const macroFadeDuringMicro =
       simState === STATE.MICRO_QUARKS
         ? 0
-        : simState === STATE.CAMERA_ZOOM_IN || simState === STATE.CAMERA_ZOOM_OUT
+        : simState === STATE.CAMERA_ZOOM_IN
           ? clamp(1 - (camZoom - 2.5) / 7.5, 0, 1)
-          : 1;
+          : simState === STATE.CAMERA_ZOOM_OUT
+            ? clamp(1 - (camZoom - 1.5) / 9.0, 0, 1)
+            : 1;
 
     if (macroFadeDuringMicro > 0.01) {
       ctx.globalCompositeOperation = 'lighter';
@@ -1153,8 +1448,12 @@
   }
 
   window.addEventListener('pointermove', (e) => {
+    const dx = pointer.active ? e.clientX - pointer.x : 0;
+    const dy = pointer.active ? e.clientY - pointer.y : 0;
     pointer.x = e.clientX;
     pointer.y = e.clientY;
+    pointer.vx = clamp(dx, -40, 40);
+    pointer.vy = clamp(dy, -40, 40);
     pointer.active = true;
     updatePointerHover(e.clientX, e.clientY);
   });
@@ -1185,7 +1484,9 @@
       if (simState === STATE.IDLE_SEED && pointer.hoverSeed) {
         startBigBangSequence();
       } else if (simState === STATE.MICRO_QUARKS && !tuningPanel.contains(e.target)) {
-        exitMicroView();
+        transitionToCosmicWeb();
+      } else if (simState === STATE.COSMIC_WEB && !tuningPanel.contains(e.target)) {
+        beginImplosionToSeed();
       }
     }
 
@@ -1210,7 +1511,10 @@
     if (e.detail === 0) startBigBangSequence();
   });
   btnMicroContinue.addEventListener('click', (e) => {
-    if (e.detail === 0) exitMicroView();
+    if (e.detail === 0) transitionToCosmicWeb();
+  });
+  btnCosmicNext.addEventListener('click', (e) => {
+    if (e.detail === 0) beginImplosionToSeed();
   });
 
   // Pannello segreto di taratura (tasto D)
