@@ -14,17 +14,19 @@
 
   const CONFIG = { ...DEFAULT_CONFIG };
 
-  // Palette: bianchi Big Bang + colori QCD (R,G,B) + atomi primordiali & nebulose
+  // Palette luminosa: bianchi Big Bang + colori QCD (R,G,B) + atomi cosmici + strati nucleosintesi stellare
   const PALETTE = [
-    [255, 255, 255],  // 0: Bianco puro (Singolarità, Big Bang, Gluoni, nuclei caldi)
+    [255, 255, 255],  // 0: Bianco puro (Singolarità, Big Bang, Gluoni, Lampo di fusione)
     [208, 218, 236],  // 1: Bianco-argento sfumato (Big Bang / Idrogeno freddo)
-    [255, 78, 108],   // 2: Quark Rosso (QCD)
-    [56, 238, 156],   // 3: Quark Verde (QCD)
-    [76, 166, 255],   // 4: Quark Blu / Idrogeno cosmico blu
-    [68, 232, 246],   // 5: Elettrone / Idrogeno ciano
+    [255, 78, 108],   // 2: Quark Rosso (QCD) / Ferro (Fe) nucleo denso cremisi
+    [56, 238, 156],   // 3: Quark Verde (QCD) / Carbonio (C) verde smeraldo
+    [76, 166, 255],   // 4: Quark Blu (QCD) / Idrogeno (H) involucro stellare e rete cosmica
+    [68, 232, 246],   // 5: Elettrone / Silicio (Si) ciano elettrico
     [148, 96, 255],   // 6: Viola cosmico (filamenti rete cosmica)
-    [255, 196, 98],   // 7: Elio-4 primordiale / oro caldo
-    [238, 86, 178],   // 8: Idrogeno-alfa ionizzato (nodi nebulosa caldi)
+    [255, 196, 98],   // 7: Elio-4 (He) oro caldo
+    [238, 86, 178],   // 8: Idrogeno-alfa ionizzato magenta
+    [255, 124, 54],   // 9: Ossigeno (O) arancione ardente
+    [194, 204, 224],  // 10: Ferro (Fe) metallo-acciaio nel nucleo finale
   ];
 
   // Riferimenti DOM
@@ -35,6 +37,7 @@
   const btnSeed = document.getElementById('btn-seed');
   const btnMicroContinue = document.getElementById('btn-micro-continue');
   const btnCosmicNext = document.getElementById('btn-cosmic-next');
+  const btnStarNext = document.getElementById('btn-star-next');
 
   const tuningPanel = document.getElementById('tuning-panel');
   const tuningClose = document.getElementById('tuning-close');
@@ -57,7 +60,7 @@
     prefersReducedMotion = e.matches;
   });
 
-  // Macchina a stati cronologica
+  // Macchina a stati cronologica (Capitoli 0-1 -> 2 -> 3)
   const STATE = {
     IDLE_SEED: 'IDLE_SEED',
     GROWING: 'GROWING',
@@ -67,6 +70,10 @@
     MICRO_QUARKS: 'MICRO_QUARKS',
     CAMERA_ZOOM_OUT: 'CAMERA_ZOOM_OUT',
     COSMIC_WEB: 'COSMIC_WEB',
+    STAR_RETICLE: 'STAR_RETICLE',
+    STAR_ZOOM_IN: 'STAR_ZOOM_IN',
+    STAR_IGNITION: 'STAR_IGNITION',
+    STELLAR_FUSION: 'STELLAR_FUSION',
     IMPLODING: 'IMPLODING',
   };
 
@@ -88,18 +95,21 @@
     seedMaxRadius: 115,
   };
 
-  // Pool finito di particelle / atomi
+  // Pool finito di particelle macroscopiche
   let particles = [];
 
   // Camera & Riquadro bianco
   let camX = 0;
   let camY = 0;
   let camZoom = 1;
+  let zoomStartX = 0;
+  let zoomStartY = 0;
   let heroIdx = 0;
+  let targetClusterNodeIdx = 5;
   let reticleSize = 116;
   let reticleAlpha = 0;
 
-  // Micro-scena: 3 Quark (R, G, B) + scambio Gluoni + Elettrone
+  // Capitolo 1: Micro-scena 3 Quark + Gluoni + Elettrone
   const micro = {
     time: 0,
     quarks: [],
@@ -110,7 +120,7 @@
     opacity: 0,
   };
 
-  // Capitolo 2: Rete Cosmica distante (14 nodi, filamenti sottili e pressione corta per nuclei pieni)
+  // Capitolo 2: Rete Cosmica estesa oltre i bordi dello schermo
   const SH_CELL = 6;
   let shCols = 0;
   let shRows = 0;
@@ -121,6 +131,26 @@
     elapsed: 0,
     nodes: [],
     filaments: [],
+  };
+
+  // Capitolo 3: Nascita Stellare & Nucleosintesi a strati (H -> He -> C -> O -> Si -> Fe)
+  // Strati ordinati dall'esterno (0: H) al nucleo centrale (5: Fe)
+  const STELLAR_SHELLS = [
+    { name: 'H',  colorIdx: 4, radiusRatio: 0.36, speed: 0.008 },
+    { name: 'He', colorIdx: 7, radiusRatio: 0.285, speed: 0.011 },
+    { name: 'C',  colorIdx: 3, radiusRatio: 0.22, speed: 0.014 },
+    { name: 'O',  colorIdx: 9, radiusRatio: 0.16, speed: 0.017 },
+    { name: 'Si', colorIdx: 5, radiusRatio: 0.108, speed: 0.021 },
+    { name: 'Fe', colorIdx: 2, radiusRatio: 0.056, speed: 0.012 },
+  ];
+
+  const star = {
+    time: 0,
+    opacity: 0,
+    collapseAtoms: [],
+    fusionStage: 0,      // 0..5 man mano che gli strati interni si fondono fino al Ferro
+    fusionAtoms: [],
+    sparks: [],
   };
 
   // Sprite glow pre-renderizzati per prestazioni a 60fps
@@ -223,7 +253,6 @@
   }
 
   function createParticle(startX, startY) {
-    // Composizione cosmologica primordiale: ~75% Idrogeno (1), ~25% Elio-4 (2)
     const isHelium = Math.random() < 0.25;
     return {
       x: startX,
@@ -240,8 +269,8 @@
       coreOx: 0,
       coreOy: 0,
       gatherPull: 0.08,
-      cosmicX: 0,
-      cosmicY: 0,
+      cosmicRole: Math.random(),
+      filSpread: (Math.random() - 0.5) * 9,
     };
   }
 
@@ -282,19 +311,18 @@
     btnSeed.style.width = `${seedHitR * 2}px`;
     btnSeed.style.height = `${seedHitR * 2}px`;
 
-    btnMicroContinue.style.left = '0px';
-    btnMicroContinue.style.top = '0px';
-    btnMicroContinue.style.width = `${viewW}px`;
-    btnMicroContinue.style.height = `${viewH}px`;
-
-    btnCosmicNext.style.left = '0px';
-    btnCosmicNext.style.top = '0px';
-    btnCosmicNext.style.width = `${viewW}px`;
-    btnCosmicNext.style.height = `${viewH}px`;
+    const fullScreenHitboxes = [btnMicroContinue, btnCosmicNext, btnStarNext];
+    for (const btn of fullScreenHitboxes) {
+      btn.style.left = '0px';
+      btn.style.top = '0px';
+      btn.style.width = `${viewW}px`;
+      btn.style.height = `${viewH}px`;
+    }
 
     btnSeed.hidden = simState !== STATE.IDLE_SEED;
     btnMicroContinue.hidden = simState !== STATE.MICRO_QUARKS;
     btnCosmicNext.hidden = simState !== STATE.COSMIC_WEB;
+    btnStarNext.hidden = simState !== STATE.STELLAR_FUSION;
   }
 
   function startBigBangSequence() {
@@ -443,47 +471,64 @@
   }
 
   /**
-   * Prepara il Capitolo 2 (Rete Cosmica):
-   * - Popola tutto lo spazio con un'immensità di atomi primordiali (~75% H, ~25% He)
-   * - Genera nodi di ammassi gravitazionali collegati da filamenti cosmici
+   * Capitolo 2: Rete Cosmica estesa anche FUORI dal campo visivo su tutti e 4 i lati.
    */
   function initCosmicWebScene() {
     cosmic.elapsed = 0;
 
-    // 14 ammassi distanziati su tutto il campo visivo (inclusi i bordi) per dare scala cosmica profonda
+    // 14 nodi visibili + 10 nodi di ancoraggio fuori schermo (-0.18..1.18)
     const anchors = [
-      { rx: 0.08, ry: 0.16, mass: 0.85 },
-      { rx: 0.31, ry: 0.14, mass: 1.05 },
-      { rx: 0.56, ry: 0.18, mass: 0.95 },
-      { rx: 0.84, ry: 0.15, mass: 1.0 },
-      { rx: 0.16, ry: 0.44, mass: 1.1 },
-      { rx: 0.41, ry: 0.41, mass: 1.35 },
-      { rx: 0.67, ry: 0.45, mass: 1.2 },
-      { rx: 0.91, ry: 0.46, mass: 0.9 },
-      { rx: 0.11, ry: 0.75, mass: 0.95 },
-      { rx: 0.34, ry: 0.71, mass: 1.15 },
-      { rx: 0.57, ry: 0.68, mass: 1.05 },
-      { rx: 0.82, ry: 0.74, mass: 1.15 },
-      { rx: 0.23, ry: 0.92, mass: 0.8 },
-      { rx: 0.69, ry: 0.91, mass: 0.85 },
+      // Nodi visibili (0..13)
+      { rx: 0.10, ry: 0.17, mass: 0.9 },
+      { rx: 0.33, ry: 0.15, mass: 1.05 },
+      { rx: 0.58, ry: 0.18, mass: 0.95 },
+      { rx: 0.85, ry: 0.16, mass: 1.0 },
+      { rx: 0.17, ry: 0.45, mass: 1.1 },
+      { rx: 0.43, ry: 0.43, mass: 1.35 }, // grande ammasso principale (centro)
+      { rx: 0.69, ry: 0.46, mass: 1.2 },
+      { rx: 0.90, ry: 0.47, mass: 0.95 },
+      { rx: 0.12, ry: 0.74, mass: 0.95 },
+      { rx: 0.36, ry: 0.72, mass: 1.15 },
+      { rx: 0.59, ry: 0.70, mass: 1.05 },
+      { rx: 0.84, ry: 0.75, mass: 1.15 },
+      { rx: 0.25, ry: 0.90, mass: 0.85 },
+      { rx: 0.70, ry: 0.89, mass: 0.9 },
+      // Nodi esterni fuori dal campo visivo (14..23) per estendere i filamenti oltre i margini
+      { rx: -0.14, ry: 0.12, mass: 0.8, offscreen: true },
+      { rx: 0.28, ry: -0.16, mass: 0.8, offscreen: true },
+      { rx: 0.72, ry: -0.15, mass: 0.8, offscreen: true },
+      { rx: 1.15, ry: 0.14, mass: 0.8, offscreen: true },
+      { rx: -0.16, ry: 0.52, mass: 0.8, offscreen: true },
+      { rx: 1.16, ry: 0.50, mass: 0.8, offscreen: true },
+      { rx: -0.14, ry: 0.88, mass: 0.8, offscreen: true },
+      { rx: 1.15, ry: 0.86, mass: 0.8, offscreen: true },
+      { rx: 0.22, ry: 1.16, mass: 0.8, offscreen: true },
+      { rx: 0.74, ry: 1.16, mass: 0.8, offscreen: true },
     ];
 
     cosmic.nodes = anchors.map((a, idx) => ({
       id: idx,
-      x: (a.rx + (Math.random() - 0.5) * 0.05) * viewW,
-      y: (a.ry + (Math.random() - 0.5) * 0.05) * viewH,
+      x: (a.rx + (Math.random() - 0.5) * 0.04) * viewW,
+      y: (a.ry + (Math.random() - 0.5) * 0.04) * viewH,
       mass: a.mass,
+      offscreen: !!a.offscreen,
       spin: idx % 2 === 0 ? 1 : -1,
     }));
 
-    // Rete fitta di filamenti sottili e curvi tra ammassi adiacenti (come una ragnatela cosmica)
+    // Filamenti interni + filamenti che proseguono oltre tutti e 4 i bordi dello schermo
     const pairs = [
+      // Maglia interna
       [0, 1], [1, 2], [2, 3],
       [0, 4], [1, 4], [1, 5], [2, 5], [2, 6], [3, 6], [3, 7],
       [4, 5], [5, 6], [6, 7],
       [4, 8], [4, 9], [5, 9], [5, 10], [6, 10], [6, 11], [7, 11],
       [8, 9], [9, 10], [10, 11],
-      [8, 12], [9, 12], [10, 13], [11, 13],
+      [8, 12], [9, 12], [12, 13], [10, 13], [11, 13],
+      // Prolungamenti fuori dal campo visivo
+      [0, 14], [0, 15], [1, 15], [2, 16], [3, 16], [3, 17],
+      [4, 18], [8, 18], [7, 19], [11, 19],
+      [8, 20], [12, 20], [11, 21], [13, 21],
+      [12, 22], [13, 23],
     ];
     cosmic.filaments = pairs.map(([aIdx, bIdx], idx) => {
       const a = cosmic.nodes[aIdx];
@@ -498,13 +543,13 @@
         by: b.y,
         nx: -dy / len,
         ny: dx / len,
-        bend: (idx % 2 === 0 ? 1 : -1) * clamp(len * 0.09, 10, 28),
+        bend: (idx % 2 === 0 ? 1 : -1) * clamp(len * 0.085, 10, 26),
         lenSq: Math.max(1, dx * dx + dy * dy),
       };
     });
 
-    const padX = viewW * 0.05;
-    const padY = viewH * 0.05;
+    const padX = viewW * 0.16;
+    const padY = viewH * 0.16;
     const hero = particles[heroIdx];
 
     shNext = new Int32Array(particles.length);
@@ -525,10 +570,71 @@
       p.vy = Math.sin(angle) * v;
       p.colorIdx = p.baseColorIdx;
       p.alphaBase = 0.4 + Math.random() * 0.5;
-      // 0..0.48 -> filamenti sottili, 0.48..0.88 -> ammassi/nodi, 0.88..1 -> vuoti cosmici
       p.cosmicRole = Math.random();
-      p.filSpread = (Math.random() - 0.5) * 9; // larghezza fine del filamento (~9px)
+      p.filSpread = (Math.random() - 0.5) * 9;
     }
+  }
+
+  /**
+   * Capitolo 3: Inizializza la nascita della Stella (collasso protostellare -> fusione a strati fino al Ferro).
+   */
+  function initStarFusionScene() {
+    const { cx, cy } = layoutBounds;
+    const minDim = Math.min(viewW, viewH);
+
+    star.time = 0;
+    star.opacity = 0;
+    star.fusionStage = 0;
+    star.sparks = [];
+
+    // Particelle del collasso protostellare (nube di H ed He che cade al centro accendendo la stella)
+    const collapseCount = 420;
+    star.collapseAtoms = Array.from({ length: collapseCount }, () => {
+      const a = Math.random() * Math.PI * 2;
+      const r = minDim * (0.14 + Math.random() * 0.42);
+      const isHe = Math.random() < 0.25;
+      return {
+        x: cx + Math.cos(a) * r,
+        y: cy + Math.sin(a) * r,
+        vx: -Math.sin(a) * (0.4 + Math.random() * 0.8),
+        vy: Math.cos(a) * (0.4 + Math.random() * 0.8),
+        colorIdx: isHe ? 7 : 4,
+        size: 0.75 + Math.random() * 0.7,
+        alpha: 0.5 + Math.random() * 0.48,
+      };
+    });
+
+    // Atomi degli strati concentrici ("a cipolla") della stella massiccia
+    const fusionCount = 860;
+    star.fusionAtoms = Array.from({ length: fusionCount }, (_, idx) => {
+      // Distribuzione negli strati: più atomi nell'involucro H, densità alta anche nei gusci interni
+      const u = idx / fusionCount;
+      let shell = 0;
+      if (u < 0.36) shell = 0;       // H
+      else if (u < 0.58) shell = 1;  // He
+      else if (u < 0.74) shell = 2;  // C
+      else if (u < 0.86) shell = 3;  // O
+      else if (u < 0.94) shell = 4;  // Si
+      else shell = 5;                // Fe
+
+      const angle = Math.random() * Math.PI * 2;
+      const shInfo = STELLAR_SHELLS[shell];
+      const jitterR = (Math.random() - 0.5) * 0.032;
+      const rNorm = Math.max(0.015, shInfo.radiusRatio + jitterR);
+
+      return {
+        shell,
+        angle,
+        rNorm,
+        targetRNorm: rNorm,
+        angVel: shInfo.speed * (0.8 + Math.random() * 0.4),
+        phase: Math.random() * Math.PI * 2,
+        size: 0.8 + Math.random() * 0.7,
+        colorIdx: shInfo.colorIdx,
+        fusing: false,
+        fuseTargetShell: shell,
+      };
+    });
   }
 
   function enterSlowMoReticle() {
@@ -552,7 +658,53 @@
     syncHitboxes();
   }
 
+  /**
+   * Avvia il Capitolo 3 scegliendo l'ammasso visibile più vicino al cursore/centro.
+   */
+  function enterStarBirthSequence(clickX, clickY) {
+    if (simState !== STATE.COSMIC_WEB) return;
+
+    let bestNode = 5;
+    let bestDist = Infinity;
+    for (let i = 0; i < cosmic.nodes.length; i++) {
+      const node = cosmic.nodes[i];
+      if (node.offscreen) continue;
+      const refX = clickX !== undefined ? clickX : layoutBounds.cx;
+      const refY = clickY !== undefined ? clickY : layoutBounds.cy;
+      const d = Math.hypot(node.x - refX, node.y - refY);
+      if (d < bestDist) {
+        bestDist = d;
+        bestNode = i;
+      }
+    }
+    targetClusterNodeIdx = bestNode;
+
+    simState = STATE.STAR_RETICLE;
+    stateTime = 0;
+    reticleSize = 128;
+    reticleAlpha = 0;
+    camX = layoutBounds.cx;
+    camY = layoutBounds.cy;
+    camZoom = 1;
+    initStarFusionScene();
+    syncHitboxes();
+  }
+
   function beginImplosionToSeed() {
+    if (simState === STATE.STELLAR_FUSION) {
+      const { cx, cy } = layoutBounds;
+      const minDim = Math.min(viewW, viewH);
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.sqrt(Math.random()) * minDim * 0.36;
+        p.x = cx + Math.cos(a) * r;
+        p.y = cy + Math.sin(a) * r;
+      }
+    }
+
+    star.opacity = 0;
+    micro.opacity = 0;
     simState = STATE.IMPLODING;
     stateTime = 0;
     implodeMerging = false;
@@ -585,7 +737,11 @@
     pointer.hoverSeed = false;
     if (pointer.down) {
       canvas.style.cursor = 'grabbing';
-    } else if (simState === STATE.MICRO_QUARKS) {
+    } else if (
+      simState === STATE.MICRO_QUARKS ||
+      simState === STATE.COSMIC_WEB ||
+      simState === STATE.STELLAR_FUSION
+    ) {
       canvas.style.cursor = 'pointer';
     } else {
       canvas.style.cursor = 'default';
@@ -627,7 +783,6 @@
 
     for (let i = 0; i < 3; i++) {
       const q = quarks[i];
-
       const dxC = cx - q.x;
       const dyC = cy - q.y;
       q.vx += dxC * (0.0008 + bindRamp * 0.0014) * dt;
@@ -734,7 +889,6 @@
     const gravityRamp = easeInOutQuad(clamp((cosmic.elapsed - 400) / 4800, 0, 1));
     const total = particles.length;
 
-    // 1. Spatial Hash a passo corto (6px) per nuclei pieni e compatti senza buchi né reticoli rigidi
     if (shNext.length !== total) {
       shNext = new Int32Array(total);
     }
@@ -770,12 +924,10 @@
       const mass = p.mass;
       const role = p.cosmicRole || 0.5;
 
-      // Lieve agitazione termica
       const thermal = (0.075 - 0.03 * gravityRamp) * (prefersReducedMotion ? 0.25 : 1);
       p.vx += (Math.random() - 0.5) * thermal * dt;
       p.vy += (Math.random() - 0.5) * thermal * dt;
 
-      // Pressione gassosa a cortissimo raggio (3.2px)
       if (p.x >= -SH_CELL && p.x < viewW + SH_CELL && p.y >= -SH_CELL && p.y < viewH + SH_CELL) {
         const cxCell = clamp(Math.floor(p.x / SH_CELL) + 1, 0, shCols - 1);
         const cyCell = clamp(Math.floor(p.y / SH_CELL) + 1, 0, shRows - 1);
@@ -804,10 +956,8 @@
         }
       }
 
-      // ~12% degli atomi resta come pulviscolo remoto nei vuoti cosmici
       if (gravityRamp > 0.001 && role < 0.88) {
         if (role < 0.48) {
-          // a) Filamenti sottili e nitidi della rete cosmica (~6-12px di spessore)
           let bestFilDistSq = Infinity;
           let bestFilDx = 0;
           let bestFilDy = 0;
@@ -842,7 +992,6 @@
             p.vx += (bestFilDx / filDist) * filPull;
             p.vy += (bestFilDy / filDist) * filPull;
           }
-          // Lento scorrimento del gas lungo il filamento verso i nodi
           if (filDist < 16) {
             const streamDir = i % 2 === 0 ? 1 : -1;
             p.vx += bestFilTangentX * 0.008 * streamDir * gravityRamp * dt;
@@ -850,7 +999,6 @@
           }
         }
 
-        // b) Nodi / Ammassi pieni (nessun buco centrale!) con lieve rotazione
         const nodeAffinity = role >= 0.48 ? 1.0 : 0.14;
         let nearestNodeDist = Infinity;
 
@@ -864,7 +1012,6 @@
 
           if (dist > 280) continue;
 
-          // Raggio morbido calibrato (sqrt(1400) ~ 37px) per ammassi pieni e distanti
           const softSq = distSq + 1400;
           const gPull = (node.mass * 72 * nodeAffinity * gravityRamp * mass * dt) / softSq;
           const nx = dx / Math.max(4, dist);
@@ -880,7 +1027,6 @@
           }
         }
 
-        // c) Riscaldamento cromatico nei nuclei compatti degli ammassi (oro / magenta / bianco caldo)
         if (nearestNodeDist < 24) {
           if (p.species === 'H' && Math.random() < 0.06) {
             p.colorIdx = nearestNodeDist < 9 ? 0 : 8;
@@ -923,6 +1069,88 @@
 
     pointer.vx *= 0.78;
     pointer.vy *= 0.78;
+  }
+
+  /**
+   * Fisica del Capitolo 3: Collasso protostellare & Nucleosintesi a strati ("a cipolla") fino al Ferro (Fe).
+   */
+  function updateStarPhysics(dtMs) {
+    const dt = Math.min(dtMs / 16.6667, 2.2);
+    star.time += dtMs;
+    const { cx, cy } = layoutBounds;
+    const minDim = Math.min(viewW, viewH);
+
+    // Fase 3A: Collasso della nube e accensione della protostella
+    if (simState === STATE.STAR_IGNITION) {
+      const dur = prefersReducedMotion ? 1600 : 3200;
+      const progress = clamp(star.time / dur, 0, 1);
+
+      for (let i = 0; i < star.collapseAtoms.length; i++) {
+        const a = star.collapseAtoms[i];
+        const dx = cx - a.x;
+        const dy = cy - a.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const nx = dx / dist;
+        const ny = dy / dist;
+
+        const pull = (0.045 + progress * 0.14) * dt;
+        a.vx = (a.vx + nx * pull - ny * 0.035 * dt) * Math.pow(0.95, dt);
+        a.vy = (a.vy + ny * pull + nx * 0.035 * dt) * Math.pow(0.95, dt);
+        a.x += a.vx * dt;
+        a.y += a.vy * dt;
+
+        // Riscaldamento progressivo al centro durante l'accensione
+        if (dist < minDim * 0.08 && progress > 0.45) {
+          a.colorIdx = progress > 0.78 ? 0 : 7;
+        }
+      }
+      return;
+    }
+
+    // Fase 3B: Fusione nucleare a strati fino al Ferro (Fe)
+    // Progressione cronologica degli strati: 0(H) -> 1(He) -> 2(C) -> 3(O) -> 4(Si) -> 5(Fe)
+    const stageInterval = prefersReducedMotion ? 1100 : 2100;
+    star.fusionStage = Math.min(5, Math.floor(star.time / stageInterval));
+
+    for (let i = 0; i < star.fusionAtoms.length; i++) {
+      const a = star.fusionAtoms[i];
+      const sh = STELLAR_SHELLS[a.shell];
+
+      // Solo gli strati già accesi sono visibili nel proprio guscio; quelli futuri restano H/He in attesa
+      const activeShell = Math.min(a.shell, star.fusionStage);
+      const targetInfo = STELLAR_SHELLS[activeShell];
+
+      a.rNorm += (a.targetRNorm - a.rNorm) * 0.04 * dt;
+      a.angle += targetInfo.speed * (prefersReducedMotion ? 0.3 : 1) * dt;
+
+      // Innesco periodico di eventi di fusione al confine verso lo strato più interno
+      if (a.shell <= star.fusionStage && a.shell < 5 && Math.random() < 0.0012 * dt) {
+        const rPx = a.rNorm * minDim;
+        const ax = cx + Math.cos(a.angle) * rPx;
+        const ay = cy + Math.sin(a.angle) * rPx;
+        if (star.sparks.length < 48) {
+          star.sparks.push({
+            x: ax,
+            y: ay,
+            vx: (Math.random() - 0.5) * 1.4,
+            vy: (Math.random() - 0.5) * 1.4,
+            life: 1.0,
+            colorIdx: 0,
+          });
+        }
+      }
+    }
+
+    // Lampi fotonici di fusione nucleare
+    for (let i = star.sparks.length - 1; i >= 0; i--) {
+      const sp = star.sparks[i];
+      sp.x += sp.vx * dt;
+      sp.y += sp.vy * dt;
+      sp.life -= 0.045 * dt;
+      if (sp.life <= 0) {
+        star.sparks.splice(i, 1);
+      }
+    }
   }
 
   function updateSimulation(dtMs) {
@@ -1032,7 +1260,6 @@
       return;
     }
 
-    // Zoom-out dal primo atomo di Idrogeno verso l'immensità degli atomi nello spazio (Capitolo 2)
     if (simState === STATE.CAMERA_ZOOM_OUT) {
       const dur = prefersReducedMotion ? 950 : 1650;
       const progress = clamp(stateTime / dur, 0, 1);
@@ -1058,9 +1285,73 @@
       return;
     }
 
-    // Capitolo 2 attivo: aggregazione gravitazionale in filamenti, ammassi e nebulose
     if (simState === STATE.COSMIC_WEB) {
       updateCosmicWebPhysics(dtMs);
+      return;
+    }
+
+    // Capitolo 3 - Riquadro bianco sull'ammasso cosmico prima di entrarci
+    if (simState === STATE.STAR_RETICLE) {
+      const dur = prefersReducedMotion ? 850 : 1350;
+      const progress = clamp(stateTime / dur, 0, 1);
+      const node = cosmic.nodes[targetClusterNodeIdx];
+      const ease = easeInOutQuad(progress);
+
+      camX = cx + (node.x - cx) * ease;
+      camY = cy + (node.y - cy) * ease;
+      camZoom = 1 + 0.55 * ease;
+
+      reticleAlpha = easeOutCubic(clamp(progress * 1.4, 0, 1));
+      reticleSize = 128 - 64 * easeOutCubic(progress);
+
+      if (progress >= 1) {
+        simState = STATE.STAR_ZOOM_IN;
+        stateTime = 0;
+        zoomStartX = node.x;
+        zoomStartY = node.y;
+      }
+      return;
+    }
+
+    // Capitolo 3 - Zoom dentro l'ammasso nebulare
+    if (simState === STATE.STAR_ZOOM_IN) {
+      const dur = prefersReducedMotion ? 900 : 1500;
+      const progress = clamp(stateTime / dur, 0, 1);
+      const eased = easeInOutCubic(progress);
+      const node = cosmic.nodes[targetClusterNodeIdx];
+
+      camX = node.x;
+      camY = node.y;
+      camZoom = 1.55 * Math.pow(7.4, eased);
+      star.opacity = clamp((camZoom - 2.2) / 6.0, 0, 1);
+
+      if (progress >= 1) {
+        simState = STATE.STAR_IGNITION;
+        stateTime = 0;
+        star.opacity = 1;
+        camZoom = 1;
+        camX = cx;
+        camY = cy;
+      }
+      return;
+    }
+
+    // Capitolo 3 - Collasso protostellare & accensione della stella
+    if (simState === STATE.STAR_IGNITION) {
+      const dur = prefersReducedMotion ? 1600 : 3200;
+      updateStarPhysics(dtMs);
+      if (stateTime >= dur) {
+        simState = STATE.STELLAR_FUSION;
+        stateTime = 0;
+        star.time = 0;
+        syncHitboxes();
+      }
+      return;
+    }
+
+    // Capitolo 3 - Fusione nucleare a strati fino al Ferro (resta qui finché l'utente non preme)
+    if (simState === STATE.STELLAR_FUSION) {
+      updateStarPhysics(dtMs);
       return;
     }
 
@@ -1329,6 +1620,119 @@
     ctx.restore();
   }
 
+  /**
+   * Disegna il Capitolo 3: Protostella in accensione e Fusione Nucleare a strati fino al Ferro.
+   */
+  function renderStarScene(opacity) {
+    if (opacity <= 0.01) return;
+    const { cx, cy } = layoutBounds;
+    const minDim = Math.min(viewW, viewH);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+
+    if (simState === STATE.STAR_ZOOM_IN || simState === STATE.STAR_IGNITION) {
+      const dur = prefersReducedMotion ? 1600 : 3200;
+      const ignProg = simState === STATE.STAR_IGNITION ? clamp(star.time / dur, 0, 1) : 0;
+
+      // Alone caldo della protostella che si accende al centro
+      if (ignProg > 0.15) {
+        const coreR = minDim * (0.04 + ignProg * 0.12);
+        const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
+        coreGrad.addColorStop(0.0, `rgba(255, 252, 240, ${(0.95 * ignProg * opacity).toFixed(3)})`);
+        coreGrad.addColorStop(0.35, `rgba(255, 192, 96, ${(0.65 * ignProg * opacity).toFixed(3)})`);
+        coreGrad.addColorStop(0.7, `rgba(255, 100, 58, ${(0.25 * ignProg * opacity).toFixed(3)})`);
+        coreGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = coreGrad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, coreR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (let i = 0; i < star.collapseAtoms.length; i++) {
+        const a = star.collapseAtoms[i];
+        const r = 4.2 * a.size;
+        ctx.globalAlpha = a.alpha * opacity;
+        ctx.drawImage(glowSprites[a.colorIdx], a.x - r, a.y - r, r * 2, r * 2);
+      }
+      ctx.restore();
+      return;
+    }
+
+    // STELLAR_FUSION: strati concentrici "a cipolla" fino al Ferro (Fe)
+    const stage = star.fusionStage;
+    const now = performance.now() * 0.003;
+
+    // 1. Sottili anelli di separazione tra gli strati nucleari attivi
+    for (let s = 0; s <= stage; s++) {
+      const sh = STELLAR_SHELLS[s];
+      const rad = sh.radiusRatio * minDim;
+      ctx.strokeStyle = `rgba(255, 255, 255, ${(0.06 * opacity).toFixed(3)})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // 2. Bagliore del nucleo di Ferro quando forgiato (stage === 5)
+    if (stage >= 5) {
+      const feRad = STELLAR_SHELLS[5].radiusRatio * minDim * 1.65;
+      const feGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, feRad);
+      feGrad.addColorStop(0.0, `rgba(255, 92, 118, ${(0.45 * opacity).toFixed(3)})`);
+      feGrad.addColorStop(0.55, `rgba(194, 204, 224, ${(0.22 * opacity).toFixed(3)})`);
+      feGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = feGrad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, feRad, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 3. Particelle degli strati elementali (gli strati non ancora fusi brillano come H/He caldo)
+    for (let i = 0; i < star.fusionAtoms.length; i++) {
+      const a = star.fusionAtoms[i];
+      const fused = a.shell <= stage;
+      const shInfo = STELLAR_SHELLS[a.shell];
+
+      const wob = Math.sin(now + a.phase) * (0.004 * minDim);
+      const distPx = Math.max(4, a.rNorm * minDim + wob);
+      let ax = cx + Math.cos(a.angle) * distPx;
+      let ay = cy + Math.sin(a.angle) * distPx;
+
+      // Perturbazione lieve col cursore
+      if (pointer.active) {
+        const mdx = ax - pointer.x;
+        const mdy = ay - pointer.y;
+        const mDist = Math.hypot(mdx, mdy);
+        if (mDist < CONFIG.magnetRadius && mDist > 1) {
+          const push = (1 - mDist / CONFIG.magnetRadius) * 18 * CONFIG.magnetForce;
+          ax += ((pointer.down ? -mdx : mdx) / mDist) * push;
+          ay += ((pointer.down ? -mdy : mdy) / mDist) * push;
+        }
+      }
+
+      let colorIdx;
+      if (!fused) {
+        colorIdx = i % 4 === 0 ? 7 : 4; // H/He primordiale prima della fusione di quello strato
+      } else {
+        colorIdx = a.shell === 5 && i % 3 === 0 ? 10 : shInfo.colorIdx;
+      }
+
+      const r = 4.4 * a.size;
+      ctx.globalAlpha = (fused ? 0.88 : 0.56) * opacity;
+      ctx.drawImage(glowSprites[colorIdx], ax - r, ay - r, r * 2, r * 2);
+    }
+
+    // 4. Lampi fotonici di fusione nucleare
+    for (let i = 0; i < star.sparks.length; i++) {
+      const sp = star.sparks[i];
+      const r = 7.5 * sp.life;
+      ctx.globalAlpha = sp.life * opacity;
+      ctx.drawImage(glowSprites[sp.colorIdx], sp.x - r, sp.y - r, r * 2, r * 2);
+    }
+
+    ctx.restore();
+  }
+
   function renderFrame() {
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
@@ -1349,19 +1753,28 @@
     const particleMergeFade =
       simState === STATE.IMPLODING && implodeMerging ? Math.max(0, 1 - implodeMergeAlpha * 0.9) : 1;
 
-    const macroFadeDuringMicro =
-      simState === STATE.MICRO_QUARKS
+    const macroFade =
+      simState === STATE.MICRO_QUARKS ||
+      simState === STATE.STAR_IGNITION ||
+      simState === STATE.STELLAR_FUSION
         ? 0
         : simState === STATE.CAMERA_ZOOM_IN
           ? clamp(1 - (camZoom - 2.5) / 7.5, 0, 1)
           : simState === STATE.CAMERA_ZOOM_OUT
             ? clamp(1 - (camZoom - 1.5) / 9.0, 0, 1)
-            : 1;
+            : simState === STATE.STAR_ZOOM_IN
+              ? clamp(1 - (camZoom - 2.2) / 6.0, 0, 1)
+              : 1;
 
-    if (macroFadeDuringMicro > 0.01) {
+    if (macroFade > 0.01) {
       ctx.globalCompositeOperation = 'lighter';
       const zoomScale = camZoom;
       const cullPad = dotBase * 5 * Math.min(zoomScale, 6);
+      const isCosmicView =
+        simState === STATE.COSMIC_WEB ||
+        simState === STATE.CAMERA_ZOOM_OUT ||
+        simState === STATE.STAR_RETICLE ||
+        simState === STATE.STAR_ZOOM_IN;
 
       for (let i = 0; i < total; i++) {
         const p = particles[i];
@@ -1372,12 +1785,11 @@
           continue;
         }
 
-        const isCosmicView = simState === STATE.COSMIC_WEB || simState === STATE.CAMERA_ZOOM_OUT;
         const isVoidSpeck = isCosmicView && (p.cosmicRole || 0) >= 0.88;
         const alpha =
           p.alphaBase *
           particleMergeFade *
-          macroFadeDuringMicro *
+          macroFade *
           (isVoidSpeck ? 0.34 : isCosmicView ? 0.78 : 1);
         const radius = dotBase * p.sizeFactor * (isCosmicView ? 0.44 : 1);
         const spriteRadius = radius * (isCosmicView ? 2.5 : 3.4) * Math.min(zoomScale, 5.5);
@@ -1393,17 +1805,23 @@
       }
     }
 
+    // Riquadro bianco: Capitolo 1 (particella isolata) o Capitolo 3 (ammasso stellare)
     if (simState === STATE.SLOW_MO_RETICLE || simState === STATE.CAMERA_ZOOM_IN) {
       const hero = particles[heroIdx];
       const hsx = cx + (hero.x - camX) * camZoom;
       const hsy = cy + (hero.y - camY) * camZoom;
-      const boxSize =
-        simState === STATE.SLOW_MO_RETICLE ? reticleSize : (48 / 1.35) * camZoom;
+      const boxSize = simState === STATE.SLOW_MO_RETICLE ? reticleSize : (48 / 1.35) * camZoom;
       const boxAlpha =
-        simState === STATE.SLOW_MO_RETICLE
-          ? reticleAlpha
-          : clamp(1 - (camZoom - 8) / 8, 0, 1);
+        simState === STATE.SLOW_MO_RETICLE ? reticleAlpha : clamp(1 - (camZoom - 8) / 8, 0, 1);
       drawWhiteReticle(hsx, hsy, boxSize, boxAlpha);
+    } else if (simState === STATE.STAR_RETICLE || simState === STATE.STAR_ZOOM_IN) {
+      const node = cosmic.nodes[targetClusterNodeIdx];
+      const nsx = cx + (node.x - camX) * camZoom;
+      const nsy = cy + (node.y - camY) * camZoom;
+      const boxSize = simState === STATE.STAR_RETICLE ? reticleSize : (64 / 1.55) * camZoom;
+      const boxAlpha =
+        simState === STATE.STAR_RETICLE ? reticleAlpha : clamp(1 - (camZoom - 3.5) / 5.5, 0, 1);
+      drawWhiteReticle(nsx, nsy, boxSize, boxAlpha);
     }
 
     if (micro.opacity > 0.01) {
@@ -1413,10 +1831,17 @@
       const microCenterY =
         simState === STATE.MICRO_QUARKS ? cy : cy + (hero.y - camY) * camZoom;
       const microScale =
-        simState === STATE.MICRO_QUARKS
-          ? 1
-          : clamp(camZoom / 22.5, 0.06, 1);
+        simState === STATE.MICRO_QUARKS ? 1 : clamp(camZoom / 22.5, 0.06, 1);
       renderMicroScene(microCenterX, microCenterY, microScale, micro.opacity);
+    }
+
+    if (
+      star.opacity > 0.01 &&
+      (simState === STATE.STAR_ZOOM_IN ||
+        simState === STATE.STAR_IGNITION ||
+        simState === STATE.STELLAR_FUSION)
+    ) {
+      renderStarScene(star.opacity);
     }
 
     if (simState === STATE.IMPLODING && implodeMerging && implodeMergeAlpha > 0) {
@@ -1521,6 +1946,8 @@
       } else if (simState === STATE.MICRO_QUARKS && !tuningPanel.contains(e.target)) {
         transitionToCosmicWeb();
       } else if (simState === STATE.COSMIC_WEB && !tuningPanel.contains(e.target)) {
+        enterStarBirthSequence(e.clientX, e.clientY);
+      } else if (simState === STATE.STELLAR_FUSION && !tuningPanel.contains(e.target)) {
         beginImplosionToSeed();
       }
     }
@@ -1549,6 +1976,9 @@
     if (e.detail === 0) transitionToCosmicWeb();
   });
   btnCosmicNext.addEventListener('click', (e) => {
+    if (e.detail === 0) enterStarBirthSequence();
+  });
+  btnStarNext.addEventListener('click', (e) => {
     if (e.detail === 0) beginImplosionToSeed();
   });
 
@@ -1627,6 +2057,7 @@
     camX = layoutBounds.cx;
     camY = layoutBounds.cy;
     micro.opacity = 0;
+    star.opacity = 0;
     syncHitboxes();
     startBigBangSequence();
   });
