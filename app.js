@@ -110,11 +110,12 @@
     opacity: 0,
   };
 
-  // Capitolo 2: Rete Cosmica (nodi di materia oscura, filamenti e griglia di autogravità PM)
-  const PM_COLS = 48;
-  const PM_ROWS = 28;
-  const pmDensity = new Float32Array(PM_COLS * PM_ROWS);
-  const pmSmooth = new Float32Array(PM_COLS * PM_ROWS);
+  // Capitolo 2: Rete Cosmica (filamenti curvi, nebulose rotanti e pressione gassosa isotropa)
+  const SH_CELL = 14;
+  let shCols = 0;
+  let shRows = 0;
+  let shHead = new Int32Array(0);
+  let shNext = new Int32Array(0);
 
   const cosmic = {
     elapsed: 0,
@@ -206,6 +207,10 @@
       seedIdleRadius: clamp(minDim * 0.021, 11, 19),
       seedMaxRadius: clamp(minDim * 0.16, 86, 155),
     };
+
+    shCols = Math.ceil(viewW / SH_CELL) + 2;
+    shRows = Math.ceil(viewH / SH_CELL) + 2;
+    shHead = new Int32Array(shCols * shRows);
 
     if (simState === STATE.IDLE_SEED) {
       seedCurrentRadius = layoutBounds.seedIdleRadius;
@@ -445,50 +450,51 @@
   function initCosmicWebScene() {
     cosmic.elapsed = 0;
 
-    // 8 pozzi gravitazionali (aloni di materia oscura primordiale) distribuiti organicamente
+    // 5 grandi regioni nebulari / ammassi principali ben distanziati sullo schermo
     const anchors = [
-      { rx: 0.22, ry: 0.28, mass: 1.15 },
-      { rx: 0.48, ry: 0.22, mass: 0.95 },
-      { rx: 0.76, ry: 0.27, mass: 1.25 },
-      { rx: 0.16, ry: 0.64, mass: 0.9 },
-      { rx: 0.43, ry: 0.53, mass: 1.45 }, // grande ammasso principale vicino al centro
-      { rx: 0.68, ry: 0.58, mass: 1.1 },
-      { rx: 0.31, ry: 0.81, mass: 0.85 },
-      { rx: 0.82, ry: 0.78, mass: 1.0 },
+      { rx: 0.22, ry: 0.30, mass: 1.05 },
+      { rx: 0.76, ry: 0.28, mass: 1.15 },
+      { rx: 0.48, ry: 0.48, mass: 1.35 }, // grande nebulosa centrale
+      { rx: 0.25, ry: 0.74, mass: 0.95 },
+      { rx: 0.77, ry: 0.73, mass: 1.05 },
     ];
 
     cosmic.nodes = anchors.map((a, idx) => ({
       id: idx,
-      x: (a.rx + (Math.random() - 0.5) * 0.06) * viewW,
-      y: (a.ry + (Math.random() - 0.5) * 0.06) * viewH,
+      x: (a.rx + (Math.random() - 0.5) * 0.05) * viewW,
+      y: (a.ry + (Math.random() - 0.5) * 0.05) * viewH,
       mass: a.mass,
       spin: idx % 2 === 0 ? 1 : -1,
     }));
 
-    // Filamenti cosmici che collegano i nodi vicini formando la rete
+    // Filamenti curvi che collegano gli ammassi formando la rete cosmica
     const pairs = [
-      [0, 1], [1, 2], [0, 3], [0, 4], [1, 4], [2, 5],
-      [3, 4], [4, 5], [3, 6], [4, 6], [5, 7], [6, 7], [1, 5],
+      [0, 1], [0, 2], [1, 2], [0, 3], [2, 3], [2, 4], [1, 4], [3, 4],
     ];
-    cosmic.filaments = pairs.map(([aIdx, bIdx]) => {
+    cosmic.filaments = pairs.map(([aIdx, bIdx], idx) => {
       const a = cosmic.nodes[aIdx];
       const b = cosmic.nodes[bIdx];
       const dx = b.x - a.x;
       const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
       return {
         ax: a.x,
         ay: a.y,
         bx: b.x,
         by: b.y,
+        nx: -dy / len,
+        ny: dx / len,
+        bend: (idx % 2 === 0 ? 1 : -1) * clamp(len * 0.14, 28, 65),
         lenSq: Math.max(1, dx * dx + dy * dy),
       };
     });
 
-    // Distribuisce gli atomi su tutta la distesa cosmica (leggermente oltre i bordi)
-    // mantenendo il nostro atomo protagonista al centro
-    const padX = viewW * 0.08;
-    const padY = viewH * 0.08;
+    // Distribuisce gli atomi su tutta la distesa cosmica (~75% Idrogeno, ~25% Elio)
+    const padX = viewW * 0.05;
+    const padY = viewH * 0.05;
     const hero = particles[heroIdx];
+
+    shNext = new Int32Array(particles.length);
 
     for (let i = 0; i < particles.length; i++) {
       const p = particles[i];
@@ -499,13 +505,17 @@
         p.x = -padX + Math.random() * (viewW + padX * 2);
         p.y = -padY + Math.random() * (viewH + padY * 2);
       }
-      // Lievi moti termici primordiali
+
       const angle = Math.random() * Math.PI * 2;
-      const v = 0.08 + Math.random() * 0.28;
+      const v = 0.06 + Math.random() * 0.22;
       p.vx = Math.cos(angle) * v;
       p.vy = Math.sin(angle) * v;
       p.colorIdx = p.baseColorIdx;
-      p.alphaBase = 0.48 + Math.random() * 0.48;
+      p.alphaBase = 0.42 + Math.random() * 0.48;
+
+      // Ruolo naturale nella rete cosmica:
+      // 0..0.44 -> flusso nei filamenti, 0.44..0.86 -> aloni/nebulose, 0.86..1 -> gas diffuso nei vuoti
+      p.cosmicRole = Math.random();
     }
   }
 
@@ -706,52 +716,31 @@
   }
 
   /**
-   * Fisica scientifica del Capitolo 2 (Instabilità di Jeans & Rete Cosmica):
-   * - Griglia Particle-Mesh (48x28) per autogravità reale locale
-   * - Flusso lungo i filamenti cosmici verso i nodi / ammassi rotanti
-   * - Segregazione di massa (Elio ~25% leggermente più pesante cade prima nei nuclei)
-   * - Riscaldamento cromatico e pressione termica nei nuclei densi delle nebulose
+   * Fisica scientifica del Capitolo 2 (Instabilità di Jeans, Rete Cosmica & Nebulose):
+   * - Pressione gassosa isotropa (Spatial Hash) per impedire il collasso puntiforme e mantenere ampie nebulose
+   * - Flusso lungo filamenti curvi della rete cosmica tra i grandi ammassi
+   * - Ampio momento angolare orbitale + riscaldamento cromatico nei nuclei più densi
    */
   function updateCosmicWebPhysics(dtMs) {
     const dt = Math.min(dtMs / 16.6667, 2.2);
     cosmic.elapsed += dtMs;
 
-    // La gravità cresce gradualmente dal gas uniforme verso il collasso filamentare
-    const gravityRamp = easeInOutQuad(clamp((cosmic.elapsed - 600) / 5500, 0, 1));
+    const gravityRamp = easeInOutQuad(clamp((cosmic.elapsed - 500) / 5200, 0, 1));
     const total = particles.length;
-    const cellW = viewW / PM_COLS;
-    const cellH = viewH / PM_ROWS;
 
-    // 1. Deposita la massa degli atomi nella griglia Particle-Mesh
-    pmDensity.fill(0);
+    // 1. Popola Spatial Hash per pressione gassosa isotropa
+    if (shNext.length !== total) {
+      shNext = new Int32Array(total);
+    }
+    shHead.fill(-1);
     for (let i = 0; i < total; i++) {
       const p = particles[i];
-      const gx = Math.floor(p.x / cellW);
-      const gy = Math.floor(p.y / cellH);
-      if (gx >= 0 && gx < PM_COLS && gy >= 0 && gy < PM_ROWS) {
-        pmDensity[gy * PM_COLS + gx] += p.mass;
-      }
-    }
-
-    // 2. Smooth 3x3 della griglia per ottenere un potenziale gravitazionale continuo
-    for (let gy = 0; gy < PM_ROWS; gy++) {
-      const row = gy * PM_COLS;
-      for (let gx = 0; gx < PM_COLS; gx++) {
-        let sum = 0;
-        let wSum = 0;
-        for (let oy = -1; oy <= 1; oy++) {
-          const ny = gy + oy;
-          if (ny < 0 || ny >= PM_ROWS) continue;
-          const nRow = ny * PM_COLS;
-          for (let ox = -1; ox <= 1; ox++) {
-            const nx = gx + ox;
-            if (nx < 0 || nx >= PM_COLS) continue;
-            const w = ox === 0 && oy === 0 ? 4 : ox === 0 || oy === 0 ? 2 : 1;
-            sum += pmDensity[nRow + nx] * w;
-            wSum += w;
-          }
-        }
-        pmSmooth[row + gx] = sum / wSum;
+      if (p.x >= -SH_CELL && p.x < viewW + SH_CELL && p.y >= -SH_CELL && p.y < viewH + SH_CELL) {
+        const cxCell = clamp(Math.floor(p.x / SH_CELL) + 1, 0, shCols - 1);
+        const cyCell = clamp(Math.floor(p.y / SH_CELL) + 1, 0, shRows - 1);
+        const cellIdx = cyCell * shCols + cxCell;
+        shNext[i] = shHead[cellIdx];
+        shHead[cellIdx] = i;
       }
     }
 
@@ -766,29 +755,67 @@
     const isAttracting = pointer.down;
     const magnetForce = CONFIG.magnetForce;
 
-    // 3. Integra gravità dei filamenti, pozzi dei nodi, gradiente PM, rotazione e pressione termica
+    const repelDist = 11.5;
+    const repelDistSq = repelDist * repelDist;
+    const repelStrength = 0.22;
+
     for (let i = 0; i < total; i++) {
       const p = particles[i];
       const mass = p.mass;
+      const role = p.cosmicRole || 0.5;
 
-      // Agitazione termica (più bassa man mano che l'universo si raffredda e collassa)
-      const thermal = (0.14 - 0.06 * gravityRamp) * (prefersReducedMotion ? 0.25 : 1);
+      // Agitazione termica + lieve turbolenza fluida cosmica
+      const thermal = (0.14 - 0.05 * gravityRamp) * (prefersReducedMotion ? 0.25 : 1);
       p.vx += (Math.random() - 0.5) * thermal * dt;
       p.vy += (Math.random() - 0.5) * thermal * dt;
 
-      if (gravityRamp > 0.001) {
-        // a) Attrazione verso il filamento cosmico più vicino
+      // Pressione interna del gas (impedisce ai pallini di sovrapporsi in grumi bianchi)
+      if (p.x >= -SH_CELL && p.x < viewW + SH_CELL && p.y >= -SH_CELL && p.y < viewH + SH_CELL) {
+        const cxCell = clamp(Math.floor(p.x / SH_CELL) + 1, 0, shCols - 1);
+        const cyCell = clamp(Math.floor(p.y / SH_CELL) + 1, 0, shRows - 1);
+        for (let oy = -1; oy <= 1; oy++) {
+          if (cyCell + oy < 0 || cyCell + oy >= shRows) continue;
+          const rowBase = (cyCell + oy) * shCols;
+          for (let ox = -1; ox <= 1; ox++) {
+            if (cxCell + ox < 0 || cxCell + ox >= shCols) continue;
+            let j = shHead[rowBase + cxCell + ox];
+            while (j !== -1) {
+              if (j !== i) {
+                const q = particles[j];
+                const rdx = p.x - q.x;
+                const rdy = p.y - q.y;
+                const rDistSq = rdx * rdx + rdy * rdy;
+                if (rDistSq < repelDistSq && rDistSq > 0.01) {
+                  const rDist = Math.sqrt(rDistSq);
+                  const push = (1 - rDist / repelDist) * repelStrength * dt;
+                  p.vx += (rdx / rDist) * push;
+                  p.vy += (rdy / rDist) * push;
+                }
+              }
+              j = shNext[j];
+            }
+          }
+        }
+      }
+
+      // ~14% degli atomi rimane come gas diffuso nei grandi vuoti intergalattici
+      if (gravityRamp > 0.001 && role < 0.86) {
+        // a) Flusso lungo i filamenti curvi della rete cosmica
+        const filAffinity = role < 0.44 ? 1.0 : 0.35;
         let bestFilDistSq = Infinity;
         let bestFilDx = 0;
         let bestFilDy = 0;
+        let bestFilTangentX = 0;
+        let bestFilTangentY = 0;
 
         for (let f = 0; f < filCount; f++) {
           const fil = filaments[f];
           const abx = fil.bx - fil.ax;
           const aby = fil.by - fil.ay;
           const t = clamp(((p.x - fil.ax) * abx + (p.y - fil.ay) * aby) / fil.lenSq, 0, 1);
-          const projX = fil.ax + abx * t;
-          const projY = fil.ay + aby * t;
+          const curve = Math.sin(t * Math.PI) * fil.bend;
+          const projX = fil.ax + abx * t + fil.nx * curve;
+          const projY = fil.ay + aby * t + fil.ny * curve;
           const dx = projX - p.x;
           const dy = projY - p.y;
           const dSq = dx * dx + dy * dy;
@@ -796,18 +823,29 @@
             bestFilDistSq = dSq;
             bestFilDx = dx;
             bestFilDy = dy;
+            const len = Math.sqrt(fil.lenSq) || 1;
+            bestFilTangentX = abx / len;
+            bestFilTangentY = aby / len;
           }
         }
 
         const filDist = Math.sqrt(bestFilDistSq) || 1;
-        if (filDist > 12 && filDist < 260) {
-          const filPull = (1 - filDist / 260) * 0.045 * gravityRamp * mass * dt;
+        if (filDist > 22 && filDist < 240) {
+          const filPull = (1 - filDist / 240) * 0.048 * filAffinity * gravityRamp * mass * dt;
           p.vx += (bestFilDx / filDist) * filPull;
           p.vy += (bestFilDy / filDist) * filPull;
         }
+        // Leggera corrente lungo il filamento verso le nebulose
+        if (filDist < 55 && role < 0.44) {
+          const streamDir = i % 2 === 0 ? 1 : -1;
+          p.vx += bestFilTangentX * 0.014 * streamDir * gravityRamp * dt;
+          p.vy += bestFilTangentY * 0.014 * streamDir * gravityRamp * dt;
+        }
 
-        // b) Attrazione gravitazionale verso i nodi / ammassi + conservazione momento angolare
+        // b) Attrazione ampia e rotazione orbitale nelle 5 grandi nebulose
+        const nodeAffinity = role >= 0.44 ? 1.0 : 0.42;
         let nearestNodeDist = Infinity;
+
         for (let n = 0; n < nodeCount; n++) {
           const node = nodes[n];
           const dx = node.x - p.x;
@@ -816,48 +854,40 @@
           const dist = Math.sqrt(distSq);
           if (dist < nearestNodeDist) nearestNodeDist = dist;
 
-          // Gravità ammorbidita 1 / (r^2 + eps^2)
-          const softSq = distSq + 2400;
-          const gPull = (node.mass * 240 * gravityRamp * mass * dt) / softSq;
-          p.vx += (dx / Math.max(12, dist)) * gPull;
-          p.vy += (dy / Math.max(12, dist)) * gPull;
+          if (dist > 340) continue;
 
-          // Rotazione e pressione termica nel nucleo della nebulosa (impedisce collasso puntiforme)
-          if (dist < 130) {
-            const coreNorm = 1 - dist / 130;
-            const tang = (0.042 * coreNorm * node.mass * gravityRamp * dt) * node.spin;
-            const nx = dx / Math.max(8, dist);
-            const ny = dy / Math.max(8, dist);
+          // Raggio morbido ampio (sqrt(9500) ~ 97px) per nebulose estese e ariose
+          const softSq = distSq + 9500;
+          const gPull = (node.mass * 165 * nodeAffinity * gravityRamp * mass * dt) / softSq;
+          const nx = dx / Math.max(12, dist);
+          const ny = dy / Math.max(12, dist);
+          p.vx += nx * gPull;
+          p.vy += ny * gPull;
+
+          // Ampia rotazione a spirale della nebulosa (equilibrio centrifugo)
+          if (dist < 220) {
+            const haloNorm = 1 - dist / 220;
+            const tang = (0.058 * haloNorm * node.mass * gravityRamp * dt) * node.spin;
             p.vx += -ny * tang;
             p.vy += nx * tang;
 
-            if (dist < 26) {
-              const pressure = (1 - dist / 26) * 0.19 * gravityRamp * dt;
+            // Pressione termica del nucleo esteso (r < 48px)
+            if (dist < 48) {
+              const pressure = (1 - dist / 48) * 0.095 * gravityRamp * dt;
               p.vx -= nx * pressure;
               p.vy -= ny * pressure;
             }
           }
         }
 
-        // c) Autogravità reale dalla griglia Particle-Mesh (gradiente di densità locale)
-        const gx = clamp(Math.floor(p.x / cellW), 1, PM_COLS - 2);
-        const gy = clamp(Math.floor(p.y / cellH), 1, PM_ROWS - 2);
-        const cIdx = gy * PM_COLS + gx;
-        const gradX = pmSmooth[cIdx + 1] - pmSmooth[cIdx - 1];
-        const gradY = pmSmooth[cIdx + PM_COLS] - pmSmooth[cIdx - PM_COLS];
-        const pmPull = 0.0085 * gravityRamp * mass * dt;
-        p.vx += gradX * pmPull;
-        p.vy += gradY * pmPull;
-
-        // d) Riscaldamento cromatico dei nuclei densi delle nebulose (H-alfa magenta / oro / bianco)
-        const localDens = pmSmooth[cIdx];
-        if (localDens > 16 || nearestNodeDist < 28) {
-          if (p.species === 'H' && Math.random() < 0.08) {
-            p.colorIdx = nearestNodeDist < 16 || localDens > 34 ? 0 : 8;
-          } else if (p.species === 'He' && Math.random() < 0.08) {
-            p.colorIdx = nearestNodeDist < 14 ? 0 : 7;
+        // c) Riscaldamento cromatico graduale nelle regioni dense delle nebulose
+        if (nearestNodeDist < 72) {
+          if (p.species === 'H' && Math.random() < 0.05) {
+            p.colorIdx = nearestNodeDist < 20 && Math.random() < 0.25 ? 0 : 8; // H-alfa magenta
+          } else if (p.species === 'He' && Math.random() < 0.05) {
+            p.colorIdx = nearestNodeDist < 18 && Math.random() < 0.25 ? 0 : 7; // Oro caldo
           }
-        } else if (p.colorIdx !== p.baseColorIdx && Math.random() < 0.04) {
+        } else if (p.colorIdx !== p.baseColorIdx && Math.random() < 0.03) {
           p.colorIdx = p.baseColorIdx;
         }
       }
@@ -885,7 +915,7 @@
         }
       }
 
-      const damp = Math.pow(0.955, dt);
+      const damp = Math.pow(0.945, dt);
       p.vx *= damp;
       p.vy *= damp;
       p.x += p.vx * dt;
@@ -1343,9 +1373,14 @@
           continue;
         }
 
-        const alpha = p.alphaBase * particleMergeFade * macroFadeDuringMicro;
+        const isCosmicView = simState === STATE.COSMIC_WEB || simState === STATE.CAMERA_ZOOM_OUT;
+        const alpha =
+          p.alphaBase *
+          particleMergeFade *
+          macroFadeDuringMicro *
+          (isCosmicView ? 0.66 : 1);
         const radius = dotBase * p.sizeFactor;
-        const spriteRadius = radius * 3.4 * Math.min(zoomScale, 5.5);
+        const spriteRadius = radius * (isCosmicView ? 2.55 : 3.4) * Math.min(zoomScale, 5.5);
 
         ctx.globalAlpha = alpha;
         ctx.drawImage(
