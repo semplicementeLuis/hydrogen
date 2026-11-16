@@ -10,8 +10,8 @@ body {
   padding: 0;
   width: 100%;
   height: 100%;
-  background-color: #ffffff;
-  color: #111111;
+  background-color: #000000;
+  color: #f4f6fb;
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -22,7 +22,7 @@ body {
   position: relative;
   width: 100vw;
   height: 100dvh;
-  background-color: #ffffff;
+  background-color: #000000;
   content-visibility: auto;
   contain-intrinsic-size: auto 100vw auto 100dvh;
 }
@@ -31,7 +31,7 @@ body {
   display: block;
   width: 100%;
   height: 100%;
-  background-color: #ffffff;
+  background-color: #000000;
   touch-action: none;
 }
 
@@ -47,7 +47,7 @@ body {
   border: 0;
 }
 
-/* Hit-area invisibili sincronizzate con i componenti di particelle */
+/* Hit-area invisibili sincronizzate con i nodi di particelle */
 .particle-hitbox {
   position: absolute;
   margin: 0;
@@ -64,17 +64,12 @@ body {
   display: none;
 }
 
-.particle-hitbox--seed,
 .particle-hitbox--circle {
   border-radius: 50%;
 }
 
-.particle-hitbox--pill {
-  border-radius: 999px;
-}
-
 .particle-hitbox:focus-visible {
-  outline: 1.5px solid #222222;
+  outline: 1.5px solid #e2e8f0;
   outline-offset: 6px;
 }
 
@@ -86,11 +81,11 @@ body {
   width: 268px;
   padding: 16px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid #d4d4d4;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
-  backdrop-filter: blur(8px);
-  color: #141414;
+  background: rgba(12, 13, 20, 0.92);
+  border: 1px solid #2e3244;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(10px);
+  color: #f1f5f9;
   z-index: 20;
   opacity: 1;
   transform: translateY(0);
@@ -127,13 +122,13 @@ body {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.14em;
-  color: #555555;
+  color: #a1a8bd;
 }
 
 .tuning-panel__close {
-  border: 1px solid #d4d4d4;
-  background: #f7f7f7;
-  color: #333333;
+  border: 1px solid #353a4f;
+  background: #181a26;
+  color: #e2e8f0;
   border-radius: 5px;
   font-size: 11px;
   font-weight: 600;
@@ -142,12 +137,12 @@ body {
 }
 
 .tuning-panel__close:hover {
-  background: #ececec;
+  background: #25283a;
 }
 
 .tuning-panel__close:focus-visible,
 .tuning-btn:focus-visible {
-  outline: 2px solid #111111;
+  outline: 2px solid #ffffff;
   outline-offset: 2px;
 }
 
@@ -164,25 +159,25 @@ body {
 }
 
 .tuning-field__row label {
-  color: #222222;
+  color: #e2e8f0;
   font-weight: 500;
 }
 
 .tuning-field__row output {
   font-variant-numeric: tabular-nums;
   font-size: 11px;
-  color: #555555;
+  color: #a1a8bd;
 }
 
-/* Range slider accessibile secondo modern-web-guidance */
+/* Range slider accessibile su tema scuro (contrasto traccia >= 3:1 su #0c0d14) */
 .tuning-field input[type="range"] {
   --slider-track-size: 4px;
   --slider-thumb-size: 14px;
   --slider-track-radius: 999px;
   --slider-thumb-radius: 50%;
-  --slider-track-color: #8e8e8e;
-  --slider-fill-color: #141414;
-  --slider-thumb-color: #111111;
+  --slider-track-color: #6d7388;
+  --slider-fill-color: #e2e8f0;
+  --slider-thumb-color: #ffffff;
   --slider-direction: to right;
   --attr-min: 0;
   --attr-max: 100;
@@ -254,7 +249,7 @@ body {
 }
 
 .tuning-field input[type="range"]:focus-visible {
-  outline: 2px solid #111111;
+  outline: 2px solid #ffffff;
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -269,24 +264,24 @@ body {
   flex: 1;
   padding: 7px 10px;
   border-radius: 7px;
-  border: 1px solid #181818;
-  background: #181818;
-  color: #ffffff;
+  border: 1px solid #e2e8f0;
+  background: #e2e8f0;
+  color: #0c0d14;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
 }
 
 .tuning-btn:hover {
-  background: #2f2f2f;
+  background: #ffffff;
 }
 
 .tuning-btn--ghost {
-  background: #ffffff;
-  color: #222222;
-  border-color: #cfcfcf;
+  background: transparent;
+  color: #e2e8f0;
+  border-color: #3a3f54;
 }
 
 .tuning-btn--ghost:hover {
-  background: #f2f2f2;
+  background: #1b1e2c;
 }

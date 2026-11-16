@@ -3,36 +3,36 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HYDROGEN</title>
+  <title>HYDROGEN — Origin of Matter</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <main class="stage-wrap" id="stage-wrap">
-    <canvas id="stage" aria-label="Esperienza interattiva HYDROGEN: simulazione di particelle su sfondo bianco">
+    <canvas id="stage" aria-label="Storia dell'universo: Big Bang e atomo di Idrogeno formati da particelle">
       <h1>HYDROGEN</h1>
-      <p>Scena interattiva di particelle magnetiche con moto browniano.</p>
+      <p>Simulazione interattiva del Big Bang, dell'atomo di idrogeno e dell'asse del tempo cosmico.</p>
     </canvas>
 
-    <!-- Semantica accessibile e hit-area trasparenti sincronizzate con i componenti di particelle -->
+    <!-- Semantica accessibile e hit-area trasparenti sincronizzate con i nodi di particelle -->
     <h1 class="sr-only">HYDROGEN</h1>
     <button
       type="button"
       id="btn-seed"
-      class="particle-hitbox particle-hitbox--seed"
-      aria-label="Avvia espansione ed esplosione Big Bang"
+      class="particle-hitbox particle-hitbox--circle"
+      aria-label="Innesca il Big Bang dalla singolarità primordiale"
     ></button>
     <button
       type="button"
-      id="btn-implode"
+      id="btn-node-singularity"
       class="particle-hitbox particle-hitbox--circle"
-      aria-label="Riavvolgi particelle nel punto centrale"
+      aria-label="Epoca 0: Singolarità — Riavvolgi le particelle al centro per ripetere il Big Bang"
       hidden
     ></button>
     <button
       type="button"
-      id="btn-pulse"
-      class="particle-hitbox particle-hitbox--pill"
-      aria-label="Genera onda di dispersione magnetica"
+      id="btn-node-hydrogen"
+      class="particle-hitbox particle-hitbox--circle"
+      aria-label="Epoca 1: Idrogeno — Emetti un impulso energetico dall'atomo"
       hidden
     ></button>
   </main>
@@ -52,17 +52,17 @@
     <div class="tuning-field">
       <div class="tuning-field__row">
         <label for="ctrl-count">Pallini</label>
-        <output id="out-count" for="ctrl-count">3800</output>
+        <output id="out-count" for="ctrl-count">4000</output>
       </div>
-      <input type="range" id="ctrl-count" min="800" max="8000" step="100" value="3800">
+      <input type="range" id="ctrl-count" min="800" max="8000" step="100" value="4000">
     </div>
 
     <div class="tuning-field">
       <div class="tuning-field__row">
         <label for="ctrl-size">Dimensione</label>
-        <output id="out-size" for="ctrl-size">1.8 px</output>
+        <output id="out-size" for="ctrl-size">1.9 px</output>
       </div>
-      <input type="range" id="ctrl-size" min="0.8" max="4.5" step="0.1" value="1.8">
+      <input type="range" id="ctrl-size" min="0.8" max="4.5" step="0.1" value="1.9">
     </div>
 
     <div class="tuning-field">

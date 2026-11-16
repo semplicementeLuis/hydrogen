@@ -3,13 +3,13 @@
 
   /**
    * Configurazione centralizzata: modifica questi valori (o premi D nella pagina)
-   * per regolare dimensione, numero, morbidezza dei confini e fisica dei pallini.
+   * per regolare dimensione, numero, morbidezza dei confini e fisica degli atomi.
    */
   const DEFAULT_CONFIG = {
-    particleCount: 3800,
-    dotSize: 1.8,
+    particleCount: 4000,
+    dotSize: 1.9,
     brownianStrength: 0.42,
-    edgeSoftness: 7,       // 0 = confini netti rigidi, >0 = lettere sfumate (pallini si staccano leggermente)
+    edgeSoftness: 7,
     damping: 0.885,
     magnetRadius: 145,
     magnetForce: 1.3,
@@ -18,14 +18,32 @@
 
   const CONFIG = { ...DEFAULT_CONFIG };
 
+  /**
+   * Registro estensibile delle epoche cosmiche (Step 1: Singolarità + Idrogeno).
+   * Nei prossimi step basterà aggiungere qui Nebulose, Stelle e Ferro nel Sangue.
+   */
+  const ERAS = [
+    { id: 'singularity', t: 0.0, groupId: 2, colorIdx: 0 },
+    { id: 'hydrogen', t: 0.26, groupId: 3, colorIdx: 3 },
+  ];
+
+  // Palette nebulosa vibrante (indice -> [R, G, B])
+  const NEBULA_COLORS = [
+    [255, 198, 92],   // 0: Oro plasma / Nucleo / Singolarità
+    [242, 72, 174],   // 1: Magenta nebulosa
+    [156, 94, 255],   // 2: Viola cosmico
+    [52, 232, 244],   // 3: Turchese / Elettrone / Idrogeno
+    [245, 248, 255],  // 4: Bianco stellare ad alta energia
+  ];
+
   // Riferimenti DOM
   const stageWrap = document.getElementById('stage-wrap');
   const canvas = document.getElementById('stage');
   const ctx = canvas.getContext('2d', { alpha: false });
 
   const btnSeed = document.getElementById('btn-seed');
-  const btnImplode = document.getElementById('btn-implode');
-  const btnPulse = document.getElementById('btn-pulse');
+  const btnNodeSingularity = document.getElementById('btn-node-singularity');
+  const btnNodeHydrogen = document.getElementById('btn-node-hydrogen');
 
   const tuningPanel = document.getElementById('tuning-panel');
   const tuningClose = document.getElementById('tuning-close');
@@ -64,6 +82,7 @@
   let simState = STATE.IDLE_SEED;
   let stateTime = 0;
   let explosionElapsed = 0;
+  let orbitAngle = 0;
   let lastTimestamp = 0;
   let rafId = null;
   let isPaused = false;
@@ -73,18 +92,14 @@
   let viewH = Math.floor(window.innerHeight);
   let dpr = Math.min(window.devicePixelRatio || 1, 2);
 
-  // Griglie layout e campo di distanza (1..8 = lettere H-Y-D-R-O-G-E-N, 9 = cerchio, 10 = pillola)
+  // Griglie layout e Chamfer Distance Field (1..8 = HYDROGEN, 9 = Nucleo, 10 = Orbita, 11 = Asse, 12.. = Nodi epoche)
   let zoneGrid = new Uint8Array(0);
-  let alphaGrid = new Uint8Array(0);
-
-  // Distance field a mezza risoluzione (dfScale = 2) per confini morbidi e gradienti fluidi
   const DF_SCALE = 2;
   let dfW = 0;
   let dfH = 0;
   let dfDist = new Int32Array(0);
   let dfZone = new Uint8Array(0);
 
-  // Zone atomiche (ogni lettera e pulsante gestisce la propria densità e carica +/-)
   let zones = [];
   let totalMaskArea = 0;
   let idealSpacing = 8;
@@ -94,22 +109,42 @@
     cy: 0,
     seedIdleRadius: 15,
     seedMaxRadius: 115,
-    circle: { x: 0, y: 0, r: 28 },
-    pill: { x: 0, y: 0, w: 116, h: 42 },
+    atom: { x: 0, y: 0, rx: 90, ry: 48, tilt: -0.22, nucleusR: 16 },
+    timeline: { y: 0, left: 0, right: 0, width: 400 },
+    nodes: [],
   };
 
-  // Pool finito di particelle anonime e libere di migrare tra zone
+  // Pool finito di particelle (incluse quelle dinamiche dell'elettrone in orbita)
   let particles = [];
+  const ELECTRON_COUNT = 58;
 
-  // Spatial Hash Grid per repulsione locale tra pallini (densità uniforme interna)
+  // Spatial Hash Grid isotropo per densità uniforme
   let shCellSize = 12;
   let shCols = 0;
   let shRows = 0;
   let shHead = new Int32Array(0);
   let shNext = new Int32Array(0);
 
-  // Cache colori scala di grigi (zero allocazioni nel loop di rendering)
-  const GRAY_STYLES = Array.from({ length: 256 }, (_, i) => `rgb(${i}, ${i}, ${i})`);
+  // Sprite glow pre-renderizzati per prestazioni a 60fps con blending additivo
+  const SPRITE_SIZE = 64;
+  const glowSprites = NEBULA_COLORS.map(([r, g, b]) => {
+    const sc = document.createElement('canvas');
+    sc.width = SPRITE_SIZE;
+    sc.height = SPRITE_SIZE;
+    const sctx = sc.getContext('2d');
+    const half = SPRITE_SIZE / 2;
+
+    const grad = sctx.createRadialGradient(half, half, 0, half, half, half);
+    grad.addColorStop(0.0, 'rgba(255, 255, 255, 0.98)');
+    grad.addColorStop(0.18, `rgba(${r}, ${g}, ${b}, 0.94)`);
+    grad.addColorStop(0.42, `rgba(${r}, ${g}, ${b}, 0.34)`);
+    grad.addColorStop(0.74, `rgba(${r}, ${g}, ${b}, 0.08)`);
+    grad.addColorStop(1.0, `rgba(${r}, ${g}, ${b}, 0)`);
+
+    sctx.fillStyle = grad;
+    sctx.fillRect(0, 0, SPRITE_SIZE, SPRITE_SIZE);
+    return sc;
+  });
 
   // Stato puntatore / calamita
   const pointer = {
@@ -122,10 +157,10 @@
     downTime: 0,
     downX: 0,
     downY: 0,
-    hoverGroup: 0, // 0, 2 (circle), 3 (pill), 99 (seed)
+    hoverGroup: 0, // 0, 2 (nodo Singolarità), 3 (nodo Idrogeno), 99 (singolarità centrale)
   };
 
-  // Stato animazione seed centrale e fusione in ritorno
+  // Stato animazione singolarità centrale e fusione in ritorno
   let seedHoverCharge = 0;
   let seedCurrentRadius = 15;
   let seedStartRadius = 15;
@@ -133,7 +168,7 @@
   let implodeMergeTime = 0;
   let implodeMergeAlpha = 0;
 
-  // Onda di dispersione progressiva (pulsante pillola)
+  // Onda di impulso energetico dal nodo Idrogeno / atomo
   let pulseWave = { active: false, x: 0, y: 0, prevRadius: 0, radius: 0, maxRadius: 0, power: 0 };
 
   function clamp(val, min, max) {
@@ -144,21 +179,34 @@
     return t * t * t;
   }
 
-  function easeOutCubic(t) {
-    return 1 - Math.pow(1 - t, 3);
-  }
-
   function easeInOutQuad(t) {
     return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
   }
 
   /**
-   * Calcola le quote bersaglio di ciascuna zona in base alla sua area:
-   * ogni lettera e pulsante ottiene esattamente la stessa densità di pallini.
+   * Calcola la posizione orbitale dell'elettrone sull'ellisse inclinata attorno al nucleo.
+   */
+  function getElectronPosition(angleOffset = 0) {
+    const { atom } = layoutBounds;
+    const a = orbitAngle + angleOffset;
+    const lx = Math.cos(a) * atom.rx;
+    const ly = Math.sin(a) * atom.ry;
+    const cosT = Math.cos(atom.tilt);
+    const sinT = Math.sin(atom.tilt);
+    return {
+      x: atom.x + lx * cosT - ly * sinT,
+      y: atom.y + lx * sinT + ly * cosT,
+    };
+  }
+
+  /**
+   * Calcola le quote bersaglio di ciascuna zona statica in base alla sua area:
+   * ogni lettera, componente dell'atomo e parte dell'asse mantiene la stessa densità.
    */
   function updateZoneTargets() {
     if (totalMaskArea <= 0) return;
-    const density = CONFIG.particleCount / totalMaskArea;
+    const structuralBudget = Math.max(100, CONFIG.particleCount - ELECTRON_COUNT);
+    const density = structuralBudget / totalMaskArea;
     idealSpacing = clamp(Math.sqrt(1 / Math.max(0.0005, density)) * 0.92, 4.5, 16);
 
     for (let z = 1; z < zones.length; z++) {
@@ -173,8 +221,10 @@
   }
 
   /**
-   * Costruisce la maschera offscreen per ogni singola lettera/pulsante e calcola
-   * un Chamfer Distance Field 2-pass per confini morbidi e forze di richiamo naturali.
+   * Costruisce la scena di presentazione (Step 1):
+   * - Modello dell'atomo di Idrogeno (nucleo + orbita)
+   * - Titolo HYDROGEN formato dagli atomi
+   * - Asse del tempo in basso formato dagli atomi con i primi 2 nodi (Singolarità, Idrogeno)
    */
   function buildLayoutMask() {
     viewW = Math.max(320, Math.floor(window.innerWidth));
@@ -191,27 +241,38 @@
     const cy = viewH * 0.5;
     const minDim = Math.min(viewW, viewH);
 
-    const seedIdleRadius = clamp(minDim * 0.022, 12, 20);
+    const seedIdleRadius = clamp(minDim * 0.021, 11, 19);
     const seedMaxRadius = clamp(minDim * 0.16, 86, 155);
 
-    const textY = viewH * 0.43;
-    const controlsY = viewH * 0.65;
-    const controlGap = clamp(viewW * 0.09, 54, 108);
+    // Geometria verticale armonica: Atomo -> HYDROGEN -> Asse del tempo
+    const atomY = viewH * 0.25;
+    const orbitRx = clamp(minDim * 0.145, 58, 128);
+    const orbitRy = orbitRx * 0.52;
+    const nucleusR = clamp(orbitRx * 0.18, 11, 21);
 
-    const circleR = clamp(minDim * 0.037, 23, 33);
-    const circleX = cx - controlGap;
+    const textY = viewH * 0.52;
 
-    const pillW = clamp(minDim * 0.155, 98, 136);
-    const pillH = clamp(circleR * 1.55, 38, 50);
-    const pillX = cx + controlGap;
+    const tlY = viewH * 0.80;
+    const tlW = clamp(viewW * 0.58, 240, 680);
+    const tlLeft = cx - tlW * 0.5;
+    const tlRight = cx + tlW * 0.5;
+    const nodeR = clamp(minDim * 0.024, 14, 21);
+
+    const eraNodes = ERAS.map((era) => ({
+      ...era,
+      x: tlLeft + tlW * era.t,
+      y: tlY,
+      r: nodeR,
+    }));
 
     layoutBounds = {
       cx,
       cy,
       seedIdleRadius,
       seedMaxRadius,
-      circle: { x: circleX, y: controlsY, r: circleR },
-      pill: { x: pillX, y: controlsY, w: pillW, h: pillH },
+      atom: { x: cx, y: atomY, rx: orbitRx, ry: orbitRy, tilt: -0.22, nucleusR },
+      timeline: { y: tlY, left: tlLeft, right: tlRight, width: tlW },
+      nodes: eraNodes,
     };
 
     if (simState === STATE.IDLE_SEED) {
@@ -224,11 +285,10 @@
     const octx = offscreen.getContext('2d', { willReadFrequently: true });
 
     zoneGrid = new Uint8Array(viewW * viewH);
-    alphaGrid = new Uint8Array(viewW * viewH);
     zones = [null];
     totalMaskArea = 0;
 
-    const registerZone = (zoneId, groupId, drawFn) => {
+    const registerZone = (zoneId, groupId, colorIdx, drawFn) => {
       octx.clearRect(0, 0, viewW, viewH);
       octx.save();
       drawFn(octx);
@@ -246,7 +306,6 @@
           if (alpha > 45) {
             const idx = rowOffset + x;
             zoneGrid[idx] = zoneId;
-            alphaGrid[idx] = alpha;
             pixels.push({ x, y });
             sumX += x;
             sumY += y;
@@ -259,6 +318,7 @@
       zones[zoneId] = {
         id: zoneId,
         groupId,
+        colorIdx,
         pixels,
         area,
         cx: area > 0 ? sumX / area : cx,
@@ -269,22 +329,22 @@
       };
     };
 
-    // Zone 1..8: ogni lettera di HYDROGEN come entità atomica separata
-    const fontSize = clamp(viewW * 0.132, 46, 168);
+    // Zone 1..8: ogni lettera di HYDROGEN con gradiente nebulosa (magenta -> viola -> turchese)
+    const fontSize = clamp(viewW * 0.122, 42, 152);
     const letterSpacing = fontSize * 0.085;
     octx.font = `900 ${fontSize}px -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif`;
-    const word = 'HYDROGEN';
-    const chars = Array.from(word);
+    const chars = Array.from('HYDROGEN');
     const widths = chars.map((ch) => octx.measureText(ch).width);
     const totalWordWidth =
       widths.reduce((acc, w) => acc + w, 0) + letterSpacing * Math.max(0, chars.length - 1);
 
+    const letterColors = [1, 1, 2, 2, 2, 3, 3, 3];
     let cursorX = cx - totalWordWidth / 2;
     for (let i = 0; i < chars.length; i++) {
       const charX = cursorX;
       const ch = chars[i];
-      registerZone(i + 1, 1, (c) => {
-        c.fillStyle = '#000000';
+      registerZone(i + 1, 1, letterColors[i], (c) => {
+        c.fillStyle = '#ffffff';
         c.font = `900 ${fontSize}px -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif`;
         c.textBaseline = 'middle';
         c.textAlign = 'left';
@@ -293,41 +353,51 @@
       cursorX += widths[i] + letterSpacing;
     }
 
-    // Zone 9: pulsante Cerchio (spessore pieno per mantenere buona leggibilità a densità uniforme)
-    registerZone(9, 2, (c) => {
-      c.strokeStyle = '#000000';
-      c.fillStyle = '#000000';
-      c.lineWidth = clamp(circleR * 0.3, 7, 10.5);
+    // Zone 9: Nucleo dell'atomo di Idrogeno (1 protone: oro/magenta caldo)
+    registerZone(9, 1, 0, (c) => {
+      c.fillStyle = '#ffffff';
       c.beginPath();
-      c.arc(circleX, controlsY, circleR, 0, Math.PI * 2);
-      c.stroke();
-
-      c.beginPath();
-      c.arc(circleX, controlsY, Math.max(5.5, circleR * 0.25), 0, Math.PI * 2);
+      c.arc(cx, atomY, nucleusR, 0, Math.PI * 2);
       c.fill();
     });
 
-    // Zone 10: pulsante Pillola
-    registerZone(10, 3, (c) => {
-      const rx = pillX - pillW / 2;
-      const ry = controlsY - pillH / 2;
-      const rad = pillH / 2;
-
-      c.strokeStyle = '#000000';
-      c.fillStyle = '#000000';
-      c.lineWidth = clamp(pillH * 0.18, 6, 9);
+    // Zone 10: Anello orbitale ellittico inclinato (viola cosmico)
+    registerZone(10, 1, 2, (c) => {
+      c.strokeStyle = '#ffffff';
+      c.lineWidth = clamp(orbitRx * 0.068, 4.5, 7);
       c.beginPath();
-      c.roundRect(rx, ry, pillW, pillH, rad);
+      c.ellipse(cx, atomY, orbitRx, orbitRy, -0.22, 0, Math.PI * 2);
       c.stroke();
+    });
 
-      const barW = pillW * 0.36;
-      const barH = Math.max(5, pillH * 0.13);
+    // Zone 11: Barra dell'asse del tempo in basso (viola/indaco morbido)
+    registerZone(11, 1, 2, (c) => {
+      c.fillStyle = '#ffffff';
+      const barH = 5.5;
       c.beginPath();
-      c.roundRect(pillX - barW / 2, controlsY - barH / 2, barW, barH, barH / 2);
+      c.roundRect(tlLeft, tlY - barH / 2, tlW, barH, barH / 2);
       c.fill();
     });
 
-    // Calcolo Chamfer Distance Field (3,4) a scala DF_SCALE=2
+    // Zone 12+: Nodi dell'asse del tempo (Step 1: Singolarità e Idrogeno)
+    eraNodes.forEach((node, idx) => {
+      const zId = 12 + idx;
+      registerZone(zId, node.groupId, node.colorIdx, (c) => {
+        c.strokeStyle = '#ffffff';
+        c.fillStyle = '#ffffff';
+        c.lineWidth = clamp(node.r * 0.34, 5, 7);
+        c.beginPath();
+        c.arc(node.x, node.y, node.r, 0, Math.PI * 2);
+        c.stroke();
+
+        // Nucleo centrale del nodo
+        c.beginPath();
+        c.arc(node.x, node.y, Math.max(5, node.r * 0.35), 0, Math.PI * 2);
+        c.fill();
+      });
+    });
+
+    // Chamfer Distance Field simmetrico (2x2)
     dfW = Math.ceil(viewW / DF_SCALE);
     dfH = Math.ceil(viewH / DF_SCALE);
     const dfLen = dfW * dfH;
@@ -356,7 +426,6 @@
       }
     }
 
-    // Passata in avanti
     for (let gy = 0; gy < dfH; gy++) {
       const row = gy * dfW;
       for (let gx = 0; gx < dfW; gx++) {
@@ -387,7 +456,6 @@
       }
     }
 
-    // Passata all'indietro
     for (let gy = dfH - 1; gy >= 0; gy--) {
       const row = gy * dfW;
       for (let gx = dfW - 1; gx >= 0; gx--) {
@@ -423,9 +491,6 @@
     syncParticleCount(false);
   }
 
-  /**
-   * Restituisce un punto interno casuale nella zona z.
-   */
   function pickZoneAnchor(zoneId) {
     const zone = zones[zoneId];
     if (!zone || zone.pixels.length === 0) {
@@ -438,24 +503,28 @@
     };
   }
 
-  /**
-   * Crea una particella anonima con caratteristiche fisiche e tempistiche proprie.
-   */
-  function createParticle(startX, startY) {
-    const initialZone = 1 + Math.floor(Math.random() * Math.max(1, zones.length - 1));
+  function createParticle(startX, startY, isElectron) {
+    const zCount = Math.max(1, zones.length - 1);
+    const initialZone = 1 + Math.floor(Math.random() * zCount);
     const anchor = pickZoneAnchor(initialZone);
+    const eAngle = Math.random() * Math.PI * 2;
+    const eRad = Math.sqrt(Math.random()) * 7.5;
+
     return {
       x: startX,
       y: startY,
       vx: 0,
       vy: 0,
+      isElectron,
+      electronOx: Math.cos(eAngle) * eRad,
+      electronOy: Math.sin(eAngle) * eRad,
       goalZone: initialZone,
       anchorX: anchor.x,
       anchorY: anchor.y,
       currentZone: 0,
-      sizeFactor: 0.72 + Math.random() * 0.58,
-      shadeBase: 10 + Math.floor(Math.random() * 44),
-      alphaBase: 0.74 + Math.random() * 0.24,
+      colorIdx: isElectron ? 3 : Math.floor(Math.random() * 4),
+      sizeFactor: isElectron ? 0.85 + Math.random() * 0.45 : 0.72 + Math.random() * 0.58,
+      alphaBase: isElectron ? 0.85 + Math.random() * 0.15 : 0.72 + Math.random() * 0.25,
       expelRank: Math.random(),
       mobility: 0.82 + Math.random() * 0.36,
       burstDrag: 0.945 + Math.random() * 0.025,
@@ -465,9 +534,6 @@
     };
   }
 
-  /**
-   * Allinea il numero finito di particelle a CONFIG.particleCount senza vincolarle a posizioni fisse.
-   */
   function syncParticleCount(recreateAll) {
     const targetCount = CONFIG.particleCount;
     const { cx, cy } = layoutBounds;
@@ -475,18 +541,21 @@
     if (recreateAll || particles.length === 0) {
       particles = [];
       for (let i = 0; i < targetCount; i++) {
-        particles.push(createParticle(cx, cy));
+        particles.push(createParticle(cx, cy, i < ELECTRON_COUNT));
       }
+      shNext = new Int32Array(particles.length);
       return;
     }
 
     if (particles.length < targetCount) {
       while (particles.length < targetCount) {
-        const zId = 1 + (particles.length % Math.max(1, zones.length - 1));
-        const anchor = pickZoneAnchor(zId);
-        const startX = simState === STATE.SETTLED ? anchor.x + (Math.random() - 0.5) * 18 : cx;
-        const startY = simState === STATE.SETTLED ? anchor.y + (Math.random() - 0.5) * 18 : cy;
-        const p = createParticle(startX, startY);
+        const idx = particles.length;
+        const isElectron = idx < ELECTRON_COUNT;
+        const zId = 1 + (idx % Math.max(1, zones.length - 1));
+        const anchor = isElectron ? getElectronPosition() : pickZoneAnchor(zId);
+        const startX = simState === STATE.SETTLED ? anchor.x + (Math.random() - 0.5) * 16 : cx;
+        const startY = simState === STATE.SETTLED ? anchor.y + (Math.random() - 0.5) * 16 : cy;
+        const p = createParticle(startX, startY, isElectron);
         p.goalZone = zId;
         p.anchorX = anchor.x;
         p.anchorY = anchor.y;
@@ -500,39 +569,42 @@
   }
 
   /**
-   * Sincronizza le aree cliccabili trasparenti per tastiera e screen reader.
+   * Sincronizza le hit-area trasparenti con la singolarità centrale e i 2 nodi dell'asse.
    */
   function syncHitboxes() {
-    const { cx, cy, seedIdleRadius, circle, pill } = layoutBounds;
+    const { cx, cy, seedIdleRadius, nodes } = layoutBounds;
 
-    const seedHitR = Math.max(seedIdleRadius * 2.2, 34);
+    const seedHitR = Math.max(seedIdleRadius * 2.3, 36);
     btnSeed.style.left = `${cx - seedHitR}px`;
     btnSeed.style.top = `${cy - seedHitR}px`;
     btnSeed.style.width = `${seedHitR * 2}px`;
     btnSeed.style.height = `${seedHitR * 2}px`;
 
-    const cPad = 10;
-    btnImplode.style.left = `${circle.x - circle.r - cPad}px`;
-    btnImplode.style.top = `${circle.y - circle.r - cPad}px`;
-    btnImplode.style.width = `${(circle.r + cPad) * 2}px`;
-    btnImplode.style.height = `${(circle.r + cPad) * 2}px`;
+    const nodeSing = nodes[0];
+    if (nodeSing) {
+      const hitR = nodeSing.r + 14;
+      btnNodeSingularity.style.left = `${nodeSing.x - hitR}px`;
+      btnNodeSingularity.style.top = `${nodeSing.y - hitR}px`;
+      btnNodeSingularity.style.width = `${hitR * 2}px`;
+      btnNodeSingularity.style.height = `${hitR * 2}px`;
+    }
 
-    const pPad = 8;
-    btnPulse.style.left = `${pill.x - pill.w / 2 - pPad}px`;
-    btnPulse.style.top = `${pill.y - pill.h / 2 - pPad}px`;
-    btnPulse.style.width = `${pill.w + pPad * 2}px`;
-    btnPulse.style.height = `${pill.h + pPad * 2}px`;
+    const nodeHydro = nodes[1];
+    if (nodeHydro) {
+      const hitR = nodeHydro.r + 14;
+      btnNodeHydrogen.style.left = `${nodeHydro.x - hitR}px`;
+      btnNodeHydrogen.style.top = `${nodeHydro.y - hitR}px`;
+      btnNodeHydrogen.style.width = `${hitR * 2}px`;
+      btnNodeHydrogen.style.height = `${hitR * 2}px`;
+    }
 
     const showSeed = simState === STATE.IDLE_SEED;
-    const showControls = simState === STATE.SETTLED || simState === STATE.EXPLODING;
+    const showNodes = simState === STATE.SETTLED || simState === STATE.EXPLODING;
     btnSeed.hidden = !showSeed;
-    btnImplode.hidden = !showControls;
-    btnPulse.hidden = !showControls;
+    btnNodeSingularity.hidden = !showNodes;
+    btnNodeHydrogen.hidden = !showNodes;
   }
 
-  /**
-   * Avvia l'ingrandimento del pallino nero centrale verso il Big Bang.
-   */
   function startBigBangSequence() {
     if (simState !== STATE.IDLE_SEED && simState !== STATE.IMPLODING) return;
     simState = STATE.GROWING;
@@ -542,8 +614,8 @@
   }
 
   /**
-   * Big Bang: scaraventa i pallini fino ai margini della pagina e oltre,
-   * ciascuno con inerzia e tempi di ritorno propri.
+   * Big Bang: scaraventa tutte le particelle di plasma caldo oltre i bordi dello schermo;
+   * ciascuna rientra con il proprio tempo formando la scena dell'Idrogeno e l'asse temporale.
    */
   function triggerExplosionFromSphere() {
     simState = STATE.EXPLODING;
@@ -572,16 +644,20 @@
       p.x = cx + Math.cos(angle) * r;
       p.y = cy + Math.sin(angle) * r;
 
-      // Velocità ampia e organica: le particelle raggiungono i bordi e oltrepassano lo schermo
       const burstSpeed =
         (0.28 + radialNorm * 0.72 + Math.random() * 0.95) * (diag * 0.044) * speedScale;
       const swirl = (Math.random() - 0.5) * 0.34;
       p.vx = Math.cos(angle + swirl) * burstSpeed;
       p.vy = Math.sin(angle + swirl) * burstSpeed;
 
-      // Tempi individuali di volo libero e ritorno naturale
+      // Colori caldi di plasma primordiale al momento dell'esplosione
+      p.colorIdx = Math.random() < 0.22 ? 4 : Math.floor(Math.random() * 4);
       p.burstDrag = 0.942 + Math.random() * 0.026;
-      p.returnDelay = prefersReducedMotion ? 160 + Math.random() * 420 : 320 + Math.random() * 2000;
+      p.returnDelay = prefersReducedMotion
+        ? 160 + Math.random() * 420
+        : p.isElectron
+          ? 650 + Math.random() * 1100
+          : 320 + Math.random() * 2000;
       p.returnDuration = prefersReducedMotion ? 500 + Math.random() * 500 : 850 + Math.random() * 1450;
       p.magneticWake = 0;
       p.currentZone = 0;
@@ -591,7 +667,7 @@
   }
 
   /**
-   * Riavvolge tutte le particelle al centro, le fa raggruppare e fondere in un'unica pallina nera.
+   * Riavvolge tutte le particelle al centro, le raggruppa e le fonde nella singolarità unica.
    */
   function implodeToSeed() {
     if (simState !== STATE.SETTLED && simState !== STATE.EXPLODING) return;
@@ -615,49 +691,41 @@
   }
 
   /**
-   * Emette un'onda magnetica progressiva dal pulsante pillola che scuote e disperde temporaneamente i pallini.
+   * Impulso energetico dal nucleo di Idrogeno (cliccando il nodo Idrogeno sull'asse).
    */
-  function triggerScatterPulse() {
+  function triggerHydrogenPulse() {
     if (simState !== STATE.SETTLED && simState !== STATE.EXPLODING) return;
-    const { pill } = layoutBounds;
+    const { atom } = layoutBounds;
     pulseWave = {
       active: true,
-      x: pill.x,
-      y: pill.y,
+      x: atom.x,
+      y: atom.y,
       prevRadius: 0,
-      radius: 12,
+      radius: 10,
       maxRadius: Math.hypot(viewW, viewH) * 0.95,
-      power: prefersReducedMotion ? 5 : 16,
+      power: prefersReducedMotion ? 4.5 : 14.5,
     };
   }
 
-  /**
-   * Aggiorna lo stato del puntatore e verifica hover sui componenti invisibili.
-   */
   function updatePointerHover(clientX, clientY) {
-    const { cx, cy, seedIdleRadius, circle, pill } = layoutBounds;
+    const { cx, cy, seedIdleRadius, nodes } = layoutBounds;
 
     if (simState === STATE.IDLE_SEED) {
       const distSeed = Math.hypot(clientX - cx, clientY - cy);
-      pointer.hoverGroup = distSeed <= Math.max(seedIdleRadius * 2.2, 34) ? 99 : 0;
+      pointer.hoverGroup = distSeed <= Math.max(seedIdleRadius * 2.3, 36) ? 99 : 0;
       canvas.style.cursor = pointer.hoverGroup === 99 ? 'pointer' : 'default';
       return;
     }
 
     if (simState === STATE.SETTLED || simState === STATE.EXPLODING) {
-      const distCircle = Math.hypot(clientX - circle.x, clientY - circle.y);
-      if (distCircle <= circle.r + 12) {
-        pointer.hoverGroup = 2;
-        canvas.style.cursor = 'pointer';
-        return;
-      }
-
-      const inPillX = Math.abs(clientX - pill.x) <= pill.w / 2 + 10;
-      const inPillY = Math.abs(clientY - pill.y) <= pill.h / 2 + 10;
-      if (inPillX && inPillY) {
-        pointer.hoverGroup = 3;
-        canvas.style.cursor = 'pointer';
-        return;
+      for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+        const dist = Math.hypot(clientX - node.x, clientY - node.y);
+        if (dist <= node.r + 14) {
+          pointer.hoverGroup = node.groupId;
+          canvas.style.cursor = 'pointer';
+          return;
+        }
       }
     }
 
@@ -665,9 +733,6 @@
     canvas.style.cursor = pointer.down ? 'grabbing' : 'default';
   }
 
-  /**
-   * Legge distanza (in px) e gradiente verso l'interno della sagoma più vicina dal Distance Field.
-   */
   function sampleDistanceField(x, y) {
     const gx = clamp(Math.floor(x / DF_SCALE), 1, dfW - 2);
     const gy = clamp(Math.floor(y / DF_SCALE), 1, dfH - 2);
@@ -688,23 +753,23 @@
     };
   }
 
-  /**
-   * Step fisico principale a 60fps: densità per zona, cariche atomiche +/-,
-   * repulsione locale tra particelle, confini morbidi e moto browniano.
-   */
   function updateSimulation(dtMs) {
     const dt = Math.min(dtMs / 16.6667, 2.2);
     stateTime += dtMs;
 
     const { cx, cy, seedIdleRadius, seedMaxRadius } = layoutBounds;
 
+    // Avanza l'orbita dell'elettrone dell'Idrogeno
+    const orbitSpeed = prefersReducedMotion ? 0.00035 : 0.00165;
+    orbitAngle = (orbitAngle + dtMs * orbitSpeed) % (Math.PI * 2);
+
     if (simState === STATE.IDLE_SEED) {
       const targetHover = pointer.hoverGroup === 99 ? 1 : 0;
       seedHoverCharge += (targetHover - seedHoverCharge) * 0.12 * dt;
 
-      const breathAmp = prefersReducedMotion ? 0.5 : 1.8;
-      const breath = Math.sin(stateTime * 0.0028) * breathAmp;
-      seedCurrentRadius = seedIdleRadius + breath + seedHoverCharge * 5.5;
+      const breathAmp = prefersReducedMotion ? 0.5 : 1.9;
+      const breath = Math.sin(stateTime * 0.003) * breathAmp;
+      seedCurrentRadius = seedIdleRadius + breath + seedHoverCharge * 6;
       return;
     }
 
@@ -713,7 +778,7 @@
       const progress = clamp(stateTime / duration, 0, 1);
       const eased = easeInOutQuad(progress) * 0.55 + easeInCubic(progress) * 0.45;
       const subtleTremor =
-        prefersReducedMotion ? 0 : Math.sin(stateTime * 0.035) * (progress * 1.4);
+        prefersReducedMotion ? 0 : Math.sin(stateTime * 0.038) * (progress * 1.5);
 
       seedCurrentRadius =
         seedStartRadius + (seedMaxRadius - seedStartRadius) * eased + subtleTremor;
@@ -753,7 +818,6 @@
       }
 
       if (!implodeMerging) {
-        // Attende che quasi tutte le particelle si siano raggruppate al centro
         if (gatheredCount >= total * 0.97 || stateTime > 1700) {
           implodeMerging = true;
           implodeMergeTime = 0;
@@ -777,13 +841,11 @@
       return;
     }
 
-    // Stato EXPLODING -> SETTLED (ogni particella continua comunque col proprio wake individuale)
     explosionElapsed += dtMs;
     if (simState === STATE.EXPLODING && stateTime > 1250) {
       simState = STATE.SETTLED;
     }
 
-    // Aggiorna onda di dispersione progressiva
     if (pulseWave.active) {
       pulseWave.prevRadius = pulseWave.radius;
       pulseWave.radius += 26 * dt;
@@ -795,8 +857,9 @@
     const total = particles.length;
     const zoneCount = zones.length;
     const softness = CONFIG.edgeSoftness;
+    const electronPos = getElectronPosition();
 
-    // 1. Azzera conteggi e popola Spatial Hash + rilevazione zona per ogni particella
+    // 1. Spatial Hash + conteggi densità per le zone strutturali
     for (let z = 1; z < zoneCount; z++) {
       zones[z].currentCount = 0;
     }
@@ -808,13 +871,11 @@
     for (let i = 0; i < total; i++) {
       const p = particles[i];
 
-      // Aggiorna risveglio magnetico individuale dopo il Big Bang
       if (p.magneticWake < 1) {
         const wakeRaw = clamp((explosionElapsed - p.returnDelay) / p.returnDuration, 0, 1);
         p.magneticWake = easeInOutQuad(wakeRaw);
       }
 
-      // Inserisci nello Spatial Hash (solo se vicino/dentro la viewport)
       if (p.x >= -shCellSize && p.x < viewW + shCellSize && p.y >= -shCellSize && p.y < viewH + shCellSize) {
         const cxCell = clamp(Math.floor(p.x / shCellSize) + 1, 0, shCols - 1);
         const cyCell = clamp(Math.floor(p.y / shCellSize) + 1, 0, shRows - 1);
@@ -823,7 +884,11 @@
         shHead[cellIdx] = i;
       }
 
-      // Controlla in quale zona si trova (includendo l'alone morbido edgeSoftness)
+      if (p.isElectron) {
+        p.currentZone = 0;
+        continue;
+      }
+
       const ix = Math.round(p.x);
       const iy = Math.round(p.y);
       let zId = 0;
@@ -843,9 +908,7 @@
       }
     }
 
-    // 2. Calcola la carica atomica di ogni zona:
-    //    charge > 0 -> positiva (ha pochi pallini -> attira)
-    //    charge < 0 -> negativa (ha troppi pallini -> espelle/respinge)
+    // 2. Carica atomica positiva/negativa per ogni zona strutturale
     let fallbackBestZone = 1;
     let fallbackMaxDeficit = -Infinity;
     for (let z = 1; z < zoneCount; z++) {
@@ -865,14 +928,13 @@
     const magnetForce = CONFIG.magnetForce * (isAttracting ? 1.45 : 1.0);
     const repelDist = idealSpacing;
     const repelDistSq = repelDist * repelDist;
-    const repelStrength = 0.28;
+    const repelStrength = 0.26;
 
-    // 3. Integra tutte le forze su ogni particella
+    // 3. Integrazione forze
     for (let i = 0; i < total; i++) {
       const p = particles[i];
       const wake = p.magneticWake;
 
-      // Onda di dispersione radiale dal pulsante pillola
       if (pulseWave.active) {
         const wdx = p.x - pulseWave.x;
         const wdy = p.y - pulseWave.y;
@@ -886,13 +948,12 @@
         }
       }
 
-      // Moto browniano continuo (più leggero durante il volo esplosivo lontano, pieno a regime)
       const brownian = brownianBase * (0.3 + 0.7 * wake);
       p.vx += (Math.random() - 0.5) * brownian * dt;
       p.vy += (Math.random() - 0.5) * brownian * dt;
 
-      // Pressione / repulsione locale isotropa tra pallini vicini -> uniforma la densità in tutte le direzioni
-      if (wake > 0.2 && p.x >= -shCellSize && p.x < viewW + shCellSize && p.y >= -shCellSize && p.y < viewH + shCellSize) {
+      // Repulsione locale isotropa tra particelle strutturali
+      if (!p.isElectron && wake > 0.2 && p.x >= -shCellSize && p.x < viewW + shCellSize && p.y >= -shCellSize && p.y < viewH + shCellSize) {
         const cxCell = clamp(Math.floor(p.x / shCellSize) + 1, 0, shCols - 1);
         const cyCell = clamp(Math.floor(p.y / shCellSize) + 1, 0, shRows - 1);
 
@@ -905,14 +966,16 @@
             while (j !== -1) {
               if (j !== i) {
                 const q = particles[j];
-                const rdx = p.x - q.x;
-                const rdy = p.y - q.y;
-                const rDistSq = rdx * rdx + rdy * rdy;
-                if (rDistSq < repelDistSq && rDistSq > 0.01) {
-                  const rDist = Math.sqrt(rDistSq);
-                  const push = (1 - rDist / repelDist) * repelStrength * wake * dt;
-                  p.vx += (rdx / rDist) * push;
-                  p.vy += (rdy / rDist) * push;
+                if (!q.isElectron) {
+                  const rdx = p.x - q.x;
+                  const rdy = p.y - q.y;
+                  const rDistSq = rdx * rdx + rdy * rdy;
+                  if (rDistSq < repelDistSq && rDistSq > 0.01) {
+                    const rDist = Math.sqrt(rDistSq);
+                    const push = (1 - rDist / repelDist) * repelStrength * wake * dt;
+                    p.vx += (rdx / rDist) * push;
+                    p.vy += (rdy / rDist) * push;
+                  }
                 }
               }
               j = shNext[j];
@@ -921,99 +984,112 @@
         }
       }
 
-      // Forze atomiche di zona (attrazione se positiva, espulsione se negativa, confini morbidi)
       if (wake > 0.001) {
-        const zId = p.currentZone;
-
-        if (zId > 0) {
-          const zone = zones[zId];
-
-          // Se la zona è troppo densa (carica negativa), espelle progressivamente i pallini in eccesso
-          const excessThreshold = clamp(-zone.charge * 1.35, 0, 0.85);
-          if (zone.charge < -0.045 && p.expelRank < excessThreshold) {
-            const outX = p.x - zone.cx;
-            const outY = p.y - zone.cy;
-            const outLen = Math.hypot(outX, outY) || 1;
-            const expelPush = (-zone.charge) * 0.85 * wake * dt;
-            p.vx += (outX / outLen) * expelPush + (Math.random() - 0.5) * 0.25 * dt;
-            p.vy += (outY / outLen) * expelPush + (Math.random() - 0.5) * 0.25 * dt;
-
-            // Sceglie già una zona positiva verso cui migrare
-            p.goalZone = fallbackBestZone;
-            const newAnc = pickZoneAnchor(fallbackBestZone);
-            p.anchorX = newAnc.x;
-            p.anchorY = newAnc.y;
-          } else {
-            // Dentro la zona: se è nella fascia sfumata (0 < dist <= softness), richiamo elastico morbido
-            const df = sampleDistanceField(p.x, p.y);
-            if (df.distPx > 0) {
-              const borderRatio = softness > 0 ? clamp(df.distPx / softness, 0, 1.5) : 1;
-              // Quando softness è alto i confini sono molto permissivi e sfumati
-              const edgePull = (softness === 0 ? 0.42 : 0.075 * borderRatio * borderRatio) * wake * dt;
-              p.vx += df.inwardX * edgePull;
-              p.vy += df.inwardY * edgePull;
-            }
-            p.goalZone = zId;
+        if (p.isElectron) {
+          // Elettrone orbitante: le sue particelle inseguono il pacchetto orbitale lungo l'orbita
+          const ex = electronPos.x + p.electronOx - p.x;
+          const ey = electronPos.y + p.electronOy - p.y;
+          const pull = 0.22 * wake * dt;
+          p.vx += ex * pull;
+          p.vy += ey * pull;
+          if (wake > 0.45 && Math.random() < 0.14) {
+            p.colorIdx = Math.random() < 0.35 ? 4 : 3; // turchese brillante / bianco stella
           }
         } else {
-          // Particella nello spazio libero (o fuori schermo dopo Big Bang):
-          // subisce attrazione dalle zone positive e repulsione da quelle negative
-          let bestZ = fallbackBestZone;
-          let bestScore = -Infinity;
+          const zId = p.currentZone;
 
-          for (let z = 1; z < zoneCount; z++) {
-            const zone = zones[z];
-            const dx = zone.cx - p.x;
-            const dy = zone.cy - p.y;
-            const dist = Math.hypot(dx, dy);
+          if (zId > 0) {
+            const zone = zones[zId];
 
-            // Zona negativa vicina: respinge i pallini di passaggio
-            if (zone.charge < -0.04 && dist < 160) {
-              const invDist = 1 / Math.max(18, dist);
-              const rep = (-zone.charge) * (1 - dist / 160) * 0.9 * wake * dt;
-              p.vx -= dx * invDist * rep;
-              p.vy -= dy * invDist * rep;
+            // Transizione fluida verso il colore educativo della zona
+            if (wake > 0.4 && p.colorIdx !== zone.colorIdx && Math.random() < 0.1) {
+              // Accenti occasionali caldi nel nucleo (oro/magenta) o nel nodo Idrogeno (turchese/magenta)
+              if (zId === 9 && Math.random() < 0.32) {
+                p.colorIdx = 1;
+              } else if (zId === 13 && Math.random() < 0.25) {
+                p.colorIdx = 1;
+              } else {
+                p.colorIdx = zone.colorIdx;
+              }
             }
 
-            // Punteggio di attrazione elettrostatica verso le zone positive (o meno sature)
-            const hunger = zone.charge > 0 ? zone.charge + 0.08 : (zone.charge + 0.02) * 0.15;
-            const score = hunger / (dist + 95);
-            if (score > bestScore) {
-              bestScore = score;
-              bestZ = z;
+            const excessThreshold = clamp(-zone.charge * 1.35, 0, 0.85);
+            if (zone.charge < -0.045 && p.expelRank < excessThreshold) {
+              const outX = p.x - zone.cx;
+              const outY = p.y - zone.cy;
+              const outLen = Math.hypot(outX, outY) || 1;
+              const expelPush = (-zone.charge) * 0.85 * wake * dt;
+              p.vx += (outX / outLen) * expelPush + (Math.random() - 0.5) * 0.25 * dt;
+              p.vy += (outY / outLen) * expelPush + (Math.random() - 0.5) * 0.25 * dt;
+
+              p.goalZone = fallbackBestZone;
+              const newAnc = pickZoneAnchor(fallbackBestZone);
+              p.anchorX = newAnc.x;
+              p.anchorY = newAnc.y;
+            } else {
+              const df = sampleDistanceField(p.x, p.y);
+              if (df.distPx > 0) {
+                const borderRatio = softness > 0 ? clamp(df.distPx / softness, 0, 1.5) : 1;
+                const edgePull = (softness === 0 ? 0.42 : 0.075 * borderRatio * borderRatio) * wake * dt;
+                p.vx += df.inwardX * edgePull;
+                p.vy += df.inwardY * edgePull;
+              }
+              p.goalZone = zId;
             }
-          }
-
-          if (p.goalZone !== bestZ || Math.random() < 0.015) {
-            p.goalZone = bestZ;
-            const anc = pickZoneAnchor(bestZ);
-            p.anchorX = anc.x;
-            p.anchorY = anc.y;
-          }
-
-          const df = sampleDistanceField(p.x, p.y);
-          // Se è già nel bacino della propria zona meta, segue anche il gradiente verso il bordo più vicino
-          if (df.nearestZone === p.goalZone && df.distPx < 90) {
-            const guideStrength = (0.28 + 0.25 * wake) * p.mobility * wake * dt;
-            const ax = p.anchorX - p.x;
-            const ay = p.anchorY - p.y;
-            const aLen = Math.hypot(ax, ay) || 1;
-            p.vx += (df.inwardX * 0.72 + (ax / aLen) * 0.28) * guideStrength;
-            p.vy += (df.inwardY * 0.72 + (ay / aLen) * 0.28) * guideStrength;
           } else {
-            const ax = p.anchorX - p.x;
-            const ay = p.anchorY - p.y;
-            const dist = Math.hypot(ax, ay) || 1;
-            // Forza naturale di richiamo verso la pagina / lettera affamata
-            const farBoost = clamp(dist / 360, 0.45, 1.85);
-            const pull = 0.34 * farBoost * p.mobility * wake * dt;
-            p.vx += (ax / dist) * pull;
-            p.vy += (ay / dist) * pull;
+            let bestZ = fallbackBestZone;
+            let bestScore = -Infinity;
+
+            for (let z = 1; z < zoneCount; z++) {
+              const zone = zones[z];
+              const dx = zone.cx - p.x;
+              const dy = zone.cy - p.y;
+              const dist = Math.hypot(dx, dy);
+
+              if (zone.charge < -0.04 && dist < 160) {
+                const invDist = 1 / Math.max(18, dist);
+                const rep = (-zone.charge) * (1 - dist / 160) * 0.9 * wake * dt;
+                p.vx -= dx * invDist * rep;
+                p.vy -= dy * invDist * rep;
+              }
+
+              const hunger = zone.charge > 0 ? zone.charge + 0.08 : (zone.charge + 0.02) * 0.15;
+              const score = hunger / (dist + 95);
+              if (score > bestScore) {
+                bestScore = score;
+                bestZ = z;
+              }
+            }
+
+            if (p.goalZone !== bestZ || Math.random() < 0.015) {
+              p.goalZone = bestZ;
+              const anc = pickZoneAnchor(bestZ);
+              p.anchorX = anc.x;
+              p.anchorY = anc.y;
+            }
+
+            const df = sampleDistanceField(p.x, p.y);
+            if (df.nearestZone === p.goalZone && df.distPx < 90) {
+              const guideStrength = (0.28 + 0.25 * wake) * p.mobility * wake * dt;
+              const ax = p.anchorX - p.x;
+              const ay = p.anchorY - p.y;
+              const aLen = Math.hypot(ax, ay) || 1;
+              p.vx += (df.inwardX * 0.72 + (ax / aLen) * 0.28) * guideStrength;
+              p.vy += (df.inwardY * 0.72 + (ay / aLen) * 0.28) * guideStrength;
+            } else {
+              const ax = p.anchorX - p.x;
+              const ay = p.anchorY - p.y;
+              const dist = Math.hypot(ax, ay) || 1;
+              const farBoost = clamp(dist / 360, 0.45, 1.85);
+              const pull = 0.34 * farBoost * p.mobility * wake * dt;
+              p.vx += (ax / dist) * pull;
+              p.vy += (ay / dist) * pull;
+            }
           }
         }
       }
 
-      // Calamita del mouse: repulsione dolce al passaggio, attrazione tenendo premuto
+      // Calamita del mouse
       if (pointerActive) {
         const mdx = p.x - pointer.x;
         const mdy = p.y - pointer.y;
@@ -1038,8 +1114,7 @@
         }
       }
 
-      // Smorzamento: più leggero durante l'espansione iniziale così i pallini volano lontano
-      const baseDamp = p.burstDrag * (1 - wake) + CONFIG.damping * wake;
+      const baseDamp = p.isElectron ? 0.76 * wake + p.burstDrag * (1 - wake) : p.burstDrag * (1 - wake) + CONFIG.damping * wake;
       const damp = Math.pow(baseDamp, dt);
       p.vx *= damp;
       p.vy *= damp;
@@ -1052,28 +1127,35 @@
     pointer.vy *= 0.78;
   }
 
+  /**
+   * Disegna la singolarità primordiale luminosa sul nero assoluto.
+   */
   function drawSeedSphere(cx, cy, r, alphaScale, growthNorm) {
-    const haloSpread = r * (1.16 + seedHoverCharge * 0.12 + growthNorm * 0.18);
-    const grad = ctx.createRadialGradient(cx, cy, r * 0.72, cx, cy, haloSpread);
-    grad.addColorStop(0, 'rgba(10, 10, 10, 1)');
-    grad.addColorStop(0.76, 'rgba(18, 18, 18, 0.96)');
-    grad.addColorStop(0.9, 'rgba(55, 55, 55, 0.22)');
-    grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    const haloSpread = r * (2.6 + seedHoverCharge * 0.45 + growthNorm * 0.75);
+    const grad = ctx.createRadialGradient(cx, cy, r * 0.15, cx, cy, haloSpread);
+    grad.addColorStop(0.0, 'rgba(255, 252, 245, 1)');
+    grad.addColorStop(0.32, 'rgba(255, 210, 128, 0.96)');
+    grad.addColorStop(0.52, 'rgba(236, 78, 175, 0.42)');
+    grad.addColorStop(0.75, 'rgba(130, 82, 245, 0.14)');
+    grad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
 
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = alphaScale;
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.arc(cx, cy, haloSpread, 0, Math.PI * 2);
     ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.restore();
   }
 
   /**
-   * Disegna esclusivamente su sfondo 100% bianco giocando solo sulle sfumature monocromatiche.
+   * Disegna su sfondo cosmico nero (#000000) con sprite nebulosa a blending additivo.
    */
   function renderFrame() {
+    ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, viewW, viewH);
 
     const { cx, cy, seedIdleRadius, seedMaxRadius } = layoutBounds;
@@ -1085,8 +1167,10 @@
       return;
     }
 
+    ctx.globalCompositeOperation = 'lighter';
+
     const dotBase = CONFIG.dotSize;
-    const cullPad = dotBase * 4;
+    const cullPad = dotBase * 5;
     const total = particles.length;
     const hoverGroup = pointer.hoverGroup;
     const particleMergeFade =
@@ -1094,48 +1178,42 @@
 
     for (let i = 0; i < total; i++) {
       const p = particles[i];
-
-      // Salta particelle temporaneamente oltre i margini della viewport
       if (p.x < -cullPad || p.x > viewW + cullPad || p.y < -cullPad || p.y > viewH + cullPad) {
         continue;
       }
 
-      const speed = Math.hypot(p.vx, p.vy);
-      const speedShade = Math.min(90, speed * 4.5);
-
       const zId = p.currentZone;
-      const isHoveredButton =
+      const isHoveredNode =
         hoverGroup !== 0 && zId > 0 && zones[zId] && zones[zId].groupId === hoverGroup;
 
-      let gray = Math.round(p.shadeBase + speedShade);
       let alpha = p.alphaBase * particleMergeFade;
-
-      if (zId === 0 && simState !== STATE.IMPLODING) {
-        // Sfumatura leggermente più morbida mentre migrano nello spazio libero
-        gray = Math.min(155, gray + 18);
-        alpha *= 0.85;
+      if (zId === 0 && !p.isElectron && simState !== STATE.IMPLODING) {
+        alpha *= 0.72;
+      }
+      if (isHoveredNode) {
+        alpha = Math.min(1, alpha + 0.22);
       }
 
-      if (isHoveredButton) {
-        gray = Math.max(0, gray - 22);
-        alpha = Math.min(1, alpha + 0.15);
-      }
-
-      gray = clamp(gray, 4, 170);
-      const radius = dotBase * p.sizeFactor * (isHoveredButton ? 1.12 : 1.0);
+      // Scala sprite affinché il nucleo corrisponda a dotSize e l'alone formi il glow della nebulosa
+      const radius = dotBase * p.sizeFactor * (p.isElectron ? 1.25 : isHoveredNode ? 1.18 : 1.0);
+      const spriteRadius = radius * 3.4;
 
       ctx.globalAlpha = alpha;
-      ctx.fillStyle = GRAY_STYLES[gray];
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.drawImage(
+        glowSprites[p.colorIdx],
+        p.x - spriteRadius,
+        p.y - spriteRadius,
+        spriteRadius * 2,
+        spriteRadius * 2
+      );
     }
 
-    // Fusione fluida delle particelle raggruppate nella singola pallina nera centrale
     if (simState === STATE.IMPLODING && implodeMerging && implodeMergeAlpha > 0) {
       drawSeedSphere(cx, cy, seedIdleRadius, implodeMergeAlpha, 0);
     }
+
     ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   function loop(timestamp) {
@@ -1234,7 +1312,7 @@
       } else if (pointer.hoverGroup === 2) {
         implodeToSeed();
       } else if (pointer.hoverGroup === 3) {
-        triggerScatterPulse();
+        triggerHydrogenPulse();
       }
     }
 
@@ -1259,11 +1337,11 @@
   btnSeed.addEventListener('click', (e) => {
     if (e.detail === 0) startBigBangSequence();
   });
-  btnImplode.addEventListener('click', (e) => {
+  btnNodeSingularity.addEventListener('click', (e) => {
     if (e.detail === 0) implodeToSeed();
   });
-  btnPulse.addEventListener('click', (e) => {
-    if (e.detail === 0) triggerScatterPulse();
+  btnNodeHydrogen.addEventListener('click', (e) => {
+    if (e.detail === 0) triggerHydrogenPulse();
   });
 
   // Pannello segreto di taratura (tasto D)
