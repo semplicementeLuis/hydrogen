@@ -108,8 +108,40 @@
   let shHead = new Int32Array(0);
   let shNext = new Int32Array(0);
 
-  // Cache colori scala di grigi (zero allocazioni nel loop di rendering)
+  // Cache colori scala di grigi (zero allocazioni nel loop di rendering v1)
   const GRAY_STYLES = Array.from({ length: 256 }, (_, i) => `rgb(${i}, ${i}, ${i})`);
+
+  // Palette e sprite glow nebulosa ripresi dalla v2 per la singolarità e il Big Bang
+  const NEBULA_COLORS = [
+    [255, 198, 92],   // 0: Oro plasma / Singolarità
+    [242, 72, 174],   // 1: Magenta nebulosa
+    [156, 94, 255],   // 2: Viola cosmico
+    [52, 232, 244],   // 3: Turchese ad alta energia
+    [245, 248, 255],  // 4: Bianco stellare
+  ];
+
+  const SPRITE_SIZE = 64;
+  const glowSprites = NEBULA_COLORS.map(([r, g, b]) => {
+    const sc = document.createElement('canvas');
+    sc.width = SPRITE_SIZE;
+    sc.height = SPRITE_SIZE;
+    const sctx = sc.getContext('2d');
+    const half = SPRITE_SIZE / 2;
+
+    const grad = sctx.createRadialGradient(half, half, 0, half, half, half);
+    grad.addColorStop(0.0, 'rgba(255, 255, 255, 0.98)');
+    grad.addColorStop(0.18, `rgba(${r}, ${g}, ${b}, 0.94)`);
+    grad.addColorStop(0.42, `rgba(${r}, ${g}, ${b}, 0.34)`);
+    grad.addColorStop(0.74, `rgba(${r}, ${g}, ${b}, 0.08)`);
+    grad.addColorStop(1.0, `rgba(${r}, ${g}, ${b}, 0)`);
+
+    sctx.fillStyle = grad;
+    sctx.fillRect(0, 0, SPRITE_SIZE, SPRITE_SIZE);
+    return sc;
+  });
+
+  // 0 = nero cosmico Big Bang v2, 1 = bianco monocromatico v1
+  let bgMix = 0;
 
   // Stato puntatore / calamita
   const pointer = {
@@ -455,6 +487,7 @@
       currentZone: 0,
       sizeFactor: 0.72 + Math.random() * 0.58,
       shadeBase: 10 + Math.floor(Math.random() * 44),
+      colorIdx: Math.random() < 0.22 ? 4 : Math.floor(Math.random() * 4),
       alphaBase: 0.74 + Math.random() * 0.24,
       expelRank: Math.random(),
       mobility: 0.82 + Math.random() * 0.36,
@@ -579,7 +612,8 @@
       p.vx = Math.cos(angle + swirl) * burstSpeed;
       p.vy = Math.sin(angle + swirl) * burstSpeed;
 
-      // Tempi individuali di volo libero e ritorno naturale
+      // Colori plasma primordiale v2 + tempi individuali di volo libero e ritorno
+      p.colorIdx = Math.random() < 0.22 ? 4 : Math.floor(Math.random() * 4);
       p.burstDrag = 0.942 + Math.random() * 0.026;
       p.returnDelay = prefersReducedMotion ? 160 + Math.random() * 420 : 320 + Math.random() * 2000;
       p.returnDuration = prefersReducedMotion ? 500 + Math.random() * 500 : 850 + Math.random() * 1450;
@@ -699,6 +733,7 @@
     const { cx, cy, seedIdleRadius, seedMaxRadius } = layoutBounds;
 
     if (simState === STATE.IDLE_SEED) {
+      bgMix = 0;
       const targetHover = pointer.hoverGroup === 99 ? 1 : 0;
       seedHoverCharge += (targetHover - seedHoverCharge) * 0.12 * dt;
 
@@ -709,6 +744,7 @@
     }
 
     if (simState === STATE.GROWING) {
+      bgMix = 0;
       const duration = prefersReducedMotion ? CONFIG.growDurationMs * 0.65 : CONFIG.growDurationMs;
       const progress = clamp(stateTime / duration, 0, 1);
       const eased = easeInOutQuad(progress) * 0.55 + easeInCubic(progress) * 0.45;
@@ -730,6 +766,8 @@
       let gatheredCount = 0;
 
       const mergeShrink = implodeMerging ? 1 - implodeMergeAlpha * 0.45 : 1;
+      const implodeDarkDur = prefersReducedMotion ? 600 : 1150;
+      bgMix = 1 - easeInOutQuad(clamp(stateTime / implodeDarkDur, 0, 1));
 
       for (let i = 0; i < total; i++) {
         const p = particles[i];
@@ -777,8 +815,11 @@
       return;
     }
 
-    // Stato EXPLODING -> SETTLED (ogni particella continua comunque col proprio wake individuale)
+    // Stato EXPLODING -> SETTLED e transizione fluida dal nero Big Bang v2 al bianco v1
     explosionElapsed += dtMs;
+    const bgFadeStart = prefersReducedMotion ? 320 : 650;
+    const bgFadeDur = prefersReducedMotion ? 850 : 1700;
+    bgMix = easeInOutQuad(clamp((explosionElapsed - bgFadeStart) / bgFadeDur, 0, 1));
     if (simState === STATE.EXPLODING && stateTime > 1250) {
       simState = STATE.SETTLED;
     }
@@ -1053,27 +1094,32 @@
   }
 
   function drawSeedSphere(cx, cy, r, alphaScale, growthNorm) {
-    const haloSpread = r * (1.16 + seedHoverCharge * 0.12 + growthNorm * 0.18);
-    const grad = ctx.createRadialGradient(cx, cy, r * 0.72, cx, cy, haloSpread);
-    grad.addColorStop(0, 'rgba(10, 10, 10, 1)');
-    grad.addColorStop(0.76, 'rgba(18, 18, 18, 0.96)');
-    grad.addColorStop(0.9, 'rgba(55, 55, 55, 0.22)');
-    grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    const haloSpread = r * (2.6 + seedHoverCharge * 0.45 + growthNorm * 0.75);
+    const grad = ctx.createRadialGradient(cx, cy, r * 0.15, cx, cy, haloSpread);
+    grad.addColorStop(0.0, 'rgba(255, 252, 245, 1)');
+    grad.addColorStop(0.32, 'rgba(255, 210, 128, 0.96)');
+    grad.addColorStop(0.52, 'rgba(236, 78, 175, 0.42)');
+    grad.addColorStop(0.75, 'rgba(130, 82, 245, 0.14)');
+    grad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
 
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = alphaScale;
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.arc(cx, cy, haloSpread, 0, Math.PI * 2);
     ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.restore();
   }
 
   /**
-   * Disegna esclusivamente su sfondo 100% bianco giocando solo sulle sfumature monocromatiche.
+   * Unisce la singolarità e l'esplosione Big Bang della v2 con lo stile monocromatico su bianco della v1.
    */
   function renderFrame() {
+    ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
-    ctx.fillStyle = '#ffffff';
+    const bgVal = Math.round(255 * bgMix);
+    ctx.fillStyle = GRAY_STYLES[bgVal];
     ctx.fillRect(0, 0, viewW, viewH);
 
     const { cx, cy, seedIdleRadius, seedMaxRadius } = layoutBounds;
@@ -1086,52 +1132,81 @@
     }
 
     const dotBase = CONFIG.dotSize;
-    const cullPad = dotBase * 4;
+    const cullPad = dotBase * 5;
     const total = particles.length;
     const hoverGroup = pointer.hoverGroup;
     const particleMergeFade =
       simState === STATE.IMPLODING && implodeMerging ? Math.max(0, 1 - implodeMergeAlpha * 0.9) : 1;
 
-    for (let i = 0; i < total; i++) {
-      const p = particles[i];
+    // Pass 1: pallini monocromatici v1 (emergono progressivamente mentre lo sfondo diventa bianco)
+    if (bgMix > 0.01) {
+      for (let i = 0; i < total; i++) {
+        const p = particles[i];
+        if (p.x < -cullPad || p.x > viewW + cullPad || p.y < -cullPad || p.y > viewH + cullPad) {
+          continue;
+        }
 
-      // Salta particelle temporaneamente oltre i margini della viewport
-      if (p.x < -cullPad || p.x > viewW + cullPad || p.y < -cullPad || p.y > viewH + cullPad) {
-        continue;
+        const speed = Math.hypot(p.vx, p.vy);
+        const speedShade = Math.min(90, speed * 4.5);
+
+        const zId = p.currentZone;
+        const isHoveredButton =
+          hoverGroup !== 0 && zId > 0 && zones[zId] && zones[zId].groupId === hoverGroup;
+
+        let gray = Math.round(p.shadeBase + speedShade);
+        let alpha = p.alphaBase * particleMergeFade * bgMix;
+
+        if (zId === 0 && simState !== STATE.IMPLODING) {
+          gray = Math.min(155, gray + 18);
+          alpha *= 0.85;
+        }
+
+        if (isHoveredButton) {
+          gray = Math.max(0, gray - 22);
+          alpha = Math.min(1, alpha + 0.15 * bgMix);
+        }
+
+        gray = clamp(gray, 4, 170);
+        const radius = dotBase * p.sizeFactor * (isHoveredButton ? 1.12 : 1.0);
+
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = GRAY_STYLES[gray];
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fill();
       }
-
-      const speed = Math.hypot(p.vx, p.vy);
-      const speedShade = Math.min(90, speed * 4.5);
-
-      const zId = p.currentZone;
-      const isHoveredButton =
-        hoverGroup !== 0 && zId > 0 && zones[zId] && zones[zId].groupId === hoverGroup;
-
-      let gray = Math.round(p.shadeBase + speedShade);
-      let alpha = p.alphaBase * particleMergeFade;
-
-      if (zId === 0 && simState !== STATE.IMPLODING) {
-        // Sfumatura leggermente più morbida mentre migrano nello spazio libero
-        gray = Math.min(155, gray + 18);
-        alpha *= 0.85;
-      }
-
-      if (isHoveredButton) {
-        gray = Math.max(0, gray - 22);
-        alpha = Math.min(1, alpha + 0.15);
-      }
-
-      gray = clamp(gray, 4, 170);
-      const radius = dotBase * p.sizeFactor * (isHoveredButton ? 1.12 : 1.0);
-
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = GRAY_STYLES[gray];
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-      ctx.fill();
     }
 
-    // Fusione fluida delle particelle raggruppate nella singola pallina nera centrale
+    // Pass 2: sprite nebulosa luminosa Big Bang v2 (attivi durante esplosione e implosione)
+    if (bgMix < 0.99) {
+      const nebulaWeight = 1 - bgMix;
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < total; i++) {
+        const p = particles[i];
+        if (p.x < -cullPad || p.x > viewW + cullPad || p.y < -cullPad || p.y > viewH + cullPad) {
+          continue;
+        }
+
+        const zId = p.currentZone;
+        let alpha = p.alphaBase * particleMergeFade * nebulaWeight;
+        if (zId === 0 && simState !== STATE.IMPLODING) {
+          alpha *= 0.78;
+        }
+        const spriteRadius = dotBase * p.sizeFactor * 3.4;
+
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(
+          glowSprites[p.colorIdx ?? 0],
+          p.x - spriteRadius,
+          p.y - spriteRadius,
+          spriteRadius * 2,
+          spriteRadius * 2
+        );
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // Fusione fluida nella singolarità luminosa v2
     if (simState === STATE.IMPLODING && implodeMerging && implodeMergeAlpha > 0) {
       drawSeedSphere(cx, cy, seedIdleRadius, implodeMergeAlpha, 0);
     }
