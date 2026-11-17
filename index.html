@@ -23,21 +23,16 @@
     ></button>
     <button
       type="button"
-      id="btn-implode"
+      id="btn-action"
       class="particle-hitbox particle-hitbox--circle"
-      aria-label="Riavvolgi particelle nel punto centrale"
+      aria-label="Invia onda d'urto e rivela la pagina"
       hidden
     ></button>
-    <button
-      type="button"
-      id="btn-pulse"
-      class="particle-hitbox particle-hitbox--pill"
-      aria-label="Genera onda di dispersione magnetica"
-      hidden
-    ></button>
+    <div id="page-hitboxes"></div>
+    <div id="thermo-sr-status" class="sr-only" aria-live="polite"></div>
   </main>
 
-  <!-- Pannello segreto per la taratura in tempo reale (premi D per aprire/chiudere) -->
+  <!-- Pannello segreto per la taratura in tempo reale (premi / per aprire/chiudere) -->
   <aside
     id="tuning-panel"
     class="tuning-panel"
@@ -46,39 +41,39 @@
   >
     <div class="tuning-panel__header">
       <span class="tuning-panel__title">PARAMETRI</span>
-      <button type="button" id="tuning-close" class="tuning-panel__close" aria-label="Chiudi pannello">D</button>
+      <button type="button" id="tuning-close" class="tuning-panel__close" aria-label="Chiudi pannello">/</button>
     </div>
 
     <div class="tuning-field">
       <div class="tuning-field__row">
         <label for="ctrl-count">Pallini</label>
-        <output id="out-count" for="ctrl-count">3800</output>
+        <output id="out-count" for="ctrl-count">4800</output>
       </div>
-      <input type="range" id="ctrl-count" min="800" max="8000" step="100" value="3800">
+      <input type="range" id="ctrl-count" min="800" max="8000" step="100" value="4800">
     </div>
 
     <div class="tuning-field">
       <div class="tuning-field__row">
         <label for="ctrl-size">Dimensione</label>
-        <output id="out-size" for="ctrl-size">1.8 px</output>
+        <output id="out-size" for="ctrl-size">1.5 px</output>
       </div>
-      <input type="range" id="ctrl-size" min="0.8" max="4.5" step="0.1" value="1.8">
+      <input type="range" id="ctrl-size" min="0.8" max="4.5" step="0.1" value="1.45">
     </div>
 
     <div class="tuning-field">
       <div class="tuning-field__row">
         <label for="ctrl-brownian">Moto Browniano</label>
-        <output id="out-brownian" for="ctrl-brownian">0.42</output>
+        <output id="out-brownian" for="ctrl-brownian">0.24</output>
       </div>
-      <input type="range" id="ctrl-brownian" min="0" max="1.4" step="0.02" value="0.42">
+      <input type="range" id="ctrl-brownian" min="0" max="1.4" step="0.02" value="0.24">
     </div>
 
     <div class="tuning-field">
       <div class="tuning-field__row">
         <label for="ctrl-softness">Confini morbidi</label>
-        <output id="out-softness" for="ctrl-softness">7 px</output>
+        <output id="out-softness" for="ctrl-softness">2 px</output>
       </div>
-      <input type="range" id="ctrl-softness" min="0" max="24" step="1" value="7">
+      <input type="range" id="ctrl-softness" min="0" max="24" step="1" value="2">
     </div>
 
     <div class="tuning-field">

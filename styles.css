@@ -69,10 +69,6 @@ body {
   border-radius: 50%;
 }
 
-.particle-hitbox--pill {
-  border-radius: 999px;
-}
-
 .particle-hitbox:focus-visible {
   outline: 1.5px solid #222222;
   outline-offset: 6px;
